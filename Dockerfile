@@ -27,7 +27,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Puppeteer to use the system Chromium instead of downloading its own.
+# Both env var names are set because different puppeteer versions look for
+# different ones — PUPPETEER_SKIP_CHROMIUM_DOWNLOAD is the older name,
+# PUPPETEER_SKIP_DOWNLOAD is what current puppeteer (v22+) actually checks.
+# Without this, `npm ci` tries to download Chromium from Google's CDN during
+# the build and can fail outright (403s are common from cloud/CI IPs).
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app

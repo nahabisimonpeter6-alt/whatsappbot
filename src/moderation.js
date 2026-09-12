@@ -35,8 +35,32 @@ function hasNonWhitelistedLink(text, whitelist) {
 /**
  * Check whether the message sender is currently a group admin.
  */
+/**
+ * Extract the numeric/user portion of a WhatsApp ID, ignoring the server
+ * suffix (@c.us, @s.whatsapp.net, @lid, etc). The same person can appear
+ * with different suffixes in different places (message.author vs a group's
+ * participant list), especially amid WhatsApp's ongoing rollout of privacy
+ * "@lid" identifiers — comparing full serialized IDs can silently fail even
+ * when it's really the same person.
+ */
+function idUserPart(serializedId) {
+  return (serializedId || '').split('@')[0];
+}
+
+/**
+ * Check whether the message sender is currently a group admin.
+ * Tries an exact ID match first, then falls back to comparing just the
+ * user/number portion (ignoring server suffix) in case the sender's ID and
+ * the group's participant list represent the same person differently.
+ */
 async function isSenderAdmin(chat, senderId) {
-  const participant = chat.participants.find((p) => p.id._serialized === senderId);
+  let participant = chat.participants.find((p) => p.id._serialized === senderId);
+
+  if (!participant) {
+    const senderUser = idUserPart(senderId);
+    participant = chat.participants.find((p) => idUserPart(p.id._serialized) === senderUser);
+  }
+
   const result = !!(participant && (participant.isAdmin || participant.isSuperAdmin));
   logger.info(
     `[admin-check] senderId=${senderId} matchedParticipant=${!!participant} isAdmin=${result} ` +

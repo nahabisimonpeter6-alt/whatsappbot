@@ -11,6 +11,7 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'moderation.db'));
+db.pragma('busy_timeout = 5000');
 
 const DEFAULT_MAX_WARNINGS = 3;
 
