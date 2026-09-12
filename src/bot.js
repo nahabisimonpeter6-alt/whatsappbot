@@ -2,6 +2,8 @@
 // Main entry point: sets up the WhatsApp client, handles login (QR code),
 // auto-reconnects on disconnect, and routes incoming messages.
 
+const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
@@ -11,10 +13,46 @@ const logger = require('./logger');
 const qrserver = require('./qrserver');
 
 const RECONNECT_DELAY_MS = 10_000;
+const SESSION_DATA_PATH = './data/session';
+
+// Chromium leaves lock files (SingletonLock/SingletonSocket/SingletonCookie)
+// in its profile folder while running, to stop two instances sharing one
+// profile. On a persistent volume (Railway), a crash or forced restart can
+// leave these behind, causing the next launch to fail with
+// "profile appears to be in use by another Chromium process" (Code: 21).
+// Safe to remove on startup since we know no other instance is running yet.
+function clearStaleChromiumLocks(rootDir) {
+  const lockNames = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+  if (!fs.existsSync(rootDir)) return;
+
+  const stack = [rootDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (lockNames.has(entry.name)) {
+        try {
+          fs.unlinkSync(fullPath);
+          logger.info(`Removed stale Chromium lock file: ${fullPath}`);
+        } catch (err) {
+          logger.warn(`Could not remove lock file ${fullPath}:`, err.message);
+        }
+      }
+    }
+  }
+}
 
 function createClient() {
   const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './data/session' }),
+    authStrategy: new LocalAuth({ dataPath: SESSION_DATA_PATH }),
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -74,6 +112,8 @@ function createClient() {
 
   return client;
 }
+
+clearStaleChromiumLocks(SESSION_DATA_PATH);
 
 const client = createClient();
 qrserver.startServer();
