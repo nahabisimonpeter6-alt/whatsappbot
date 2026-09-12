@@ -1,14 +1,9 @@
 {
-  "name": "whatsapp-bot-original",
+  "name": "clean-whatsapp-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Fresh WhatsApp group moderation bot built independently from the previous failed project.",
-  "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js"
-  },
-  "engines": {
-    "node": ">=18"
   },
   "dependencies": {
     "express": "^4.21.2",

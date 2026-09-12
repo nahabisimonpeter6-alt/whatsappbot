@@ -1,52 +1,45 @@
-# Fresh WhatsApp Bot
+# Clean WhatsApp Bot for Railway
 
-This is a clean project created independently of the previous bot code.
+This project is independently built and does not use the previous bot's source files.
+
+## Railway deployment
+
+Deploy this repository/project with Dockerfile detection enabled.
+
+The Dockerfile installs Chromium and its Linux dependencies, including `libglib2.0-0`.
+
+Use a persistent Railway volume mounted at:
+
+`/app/data/session`
+
+No old WhatsApp session should be copied into the project for the first test.
 
 ## Features
 
-- whatsapp-web.js + LocalAuth
-- Railway-friendly HTTP health endpoint
-- QR authentication
-- Group detection using `@g.us`
-- Anti-link detection
-- Link deletion when the bot is a group admin
-- Warning system independent of deletion success
-- `.d` command for deleting a quoted message
-- `.r` command for removing a quoted member
-- `.ping` test command
-- Detailed message/error logging
+- WhatsApp Web authentication
+- Persistent LocalAuth session
+- Railway health endpoint
+- Group anti-link detection
+- Link deletion when the bot is a group administrator
+- Warning after detection
+- `.d` for deleting a quoted message
+- `.r` for removing a quoted member
+- `.ping` health test
 
-## Important design
+## First test
 
-The message event does NOT call `client.getChatById()` before processing every message.
+Make the bot a group administrator, then send:
 
-The anti-link system first checks whether the message is a group message from `message.from`. It only attempts to resolve the group chat when moderation actually needs group metadata.
+`hello`
 
-## Railway
+`https://example.com`
 
-Use:
+Reply to a message with:
 
-    npm install
-    npm start
+`.d`
 
-Set the start command to:
+Reply to a member message with:
 
-    npm start
+`.r`
 
-A persistent volume is recommended for:
-
-    /app/data/session
-
-The bot must be a group administrator for automatic deletion and member-removal operations.
-
-## First tests
-
-1. Deploy.
-2. Authenticate the WhatsApp account.
-3. Add the bot as group administrator.
-4. Send `hello`.
-5. Send `https://example.com`.
-6. Reply to a message with `.d`.
-7. Reply to a member message with `.r`.
-
-Do not copy old session files into this project. Authenticate this fresh installation separately.
+The bot deliberately avoids calling `client.getChatById()` globally before message processing.
