@@ -130,7 +130,14 @@ function createClient() {
   client.on('message', async (message) => {
     let chat;
     try {
-      chat = await message.getChat();
+      try {
+        chat = await message.getChat();
+      } catch (getChatErr) {
+        // Fallback: retry via the group id directly. Doesn't always help
+        // (see known LID limitation below) but costs nothing to try.
+        chat = await client.getChatById(message.from);
+      }
+
       logger.info(
         `[msg] from=${message.from} author=${message.author || '(none)'} isGroup=${chat.isGroup} body="${(message.body || '').slice(0, 50)}"`
       );
@@ -140,6 +147,22 @@ function createClient() {
 
       await handleMessage(client, message);
     } catch (err) {
+      const isLidSender = (message?.author || '').includes('@lid');
+
+      if (isLidSender) {
+        // Known, currently-unresolved whatsapp-web.js limitation: messages
+        // from participants on WhatsApp's newer @lid privacy identifiers
+        // can fail chat/participant resolution deep inside the library
+        // (see wwebjs/whatsapp-web.js #3631, #3582, #5733). Not fixable
+        // from our side — log concisely instead of a full stack dump on
+        // every single message from this sender.
+        logger.warn(
+          `Skipped message from @lid-addressed sender ${message.author} — ` +
+          `known whatsapp-web.js limitation, not an application error (err: ${err?.message || err}).`
+        );
+        return;
+      }
+
       logger.error(
         '\n========== MESSAGE HANDLER ERROR ==========\n' +
         `Command: ${(message?.body || '').split(/\s+/)[0] || '(none)'}\n` +
