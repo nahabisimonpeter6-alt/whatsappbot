@@ -70,6 +70,14 @@ function createClient() {
     },
   });
 
+  client.on('loading_screen', (percent, message) => {
+    logger.info(`[loading_screen] ${percent}% - ${message}`);
+  });
+
+  client.on('change_state', (state) => {
+    logger.info(`[change_state] ${state}`);
+  });
+
   client.on('qr', (qr) => {
     logger.info('QR code generated — visit the app URL in a browser, or scan the terminal QR below.');
     qrcode.generate(qr, { small: true });
@@ -122,6 +130,23 @@ clearStaleChromiumLocks(SESSION_DATA_PATH);
 
 const client = createClient();
 qrserver.startServer();
+
+// Watchdog: if nothing has happened within 90s of boot (no qr, no ready,
+// no error), Puppeteer/WhatsApp Web is likely stuck silently — log it
+// loudly instead of leaving the page frozen on "starting" with no clue why.
+let clientProgressed = false;
+['qr', 'ready', 'auth_failure'].forEach((evt) => {
+  client.once(evt, () => { clientProgressed = true; });
+});
+setTimeout(() => {
+  if (!clientProgressed) {
+    logger.warn(
+      'No qr/ready/auth_failure event 90s after startup — client.initialize() appears to be ' +
+      'hanging silently (likely stuck launching Chromium or loading WhatsApp Web).'
+    );
+  }
+}, 90_000);
+
 client.initialize().catch((err) => {
   logger.error('Failed to initialize WhatsApp client:', err.message);
   qrserver.setStatus('starting'); // still starting so page keeps showing the real status
