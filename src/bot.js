@@ -18,7 +18,15 @@ function createClient() {
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage', // avoid /dev/shm size limits crashing Chromium in containers
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process', // reduces memory footprint at some cost to stability — worth it on small containers
+      ],
     },
   });
 

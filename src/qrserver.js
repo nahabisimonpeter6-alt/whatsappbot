@@ -46,6 +46,7 @@ function renderPage() {
 
 function startServer() {
   const port = process.env.PORT || 3000;
+  const host = '0.0.0.0'; // Explicit bind — required for Railway's proxy to reach the container.
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -56,8 +57,12 @@ function startServer() {
     res.end(renderPage());
   });
 
-  server.listen(port, () => {
-    console.log(`[qrserver] Status page listening on port ${port}`);
+  server.on('error', (err) => {
+    console.error('[qrserver] Failed to start HTTP server:', err.message);
+  });
+
+  server.listen(port, host, () => {
+    console.log(`[qrserver] Status page listening on ${host}:${port}`);
   });
 
   return server;
