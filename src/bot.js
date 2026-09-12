@@ -101,6 +101,11 @@ function createClient() {
 
   client.on('message', async (message) => {
     try {
+      const chat = await message.getChat();
+      logger.info(
+        `[msg] from=${message.from} author=${message.author || '(none)'} isGroup=${chat.isGroup} body="${(message.body || '').slice(0, 50)}"`
+      );
+
       const wasCommand = await handleCommand(client, message);
       if (wasCommand) return;
 

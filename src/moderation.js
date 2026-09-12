@@ -37,7 +37,12 @@ function hasNonWhitelistedLink(text, whitelist) {
  */
 async function isSenderAdmin(chat, senderId) {
   const participant = chat.participants.find((p) => p.id._serialized === senderId);
-  return !!(participant && (participant.isAdmin || participant.isSuperAdmin));
+  const result = !!(participant && (participant.isAdmin || participant.isSuperAdmin));
+  logger.info(
+    `[admin-check] senderId=${senderId} matchedParticipant=${!!participant} isAdmin=${result} ` +
+    `participantIds=${chat.participants.map((p) => p.id._serialized).join(',')}`
+  );
+  return result;
 }
 
 async function warnAndMaybeRemove(chat, senderId, reason) {
