@@ -2,8 +2,6 @@
 // Main entry point: sets up the WhatsApp client, handles login (QR code),
 // auto-reconnects on disconnect, and routes incoming messages.
 
-const fs = require('fs');
-const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
@@ -13,46 +11,10 @@ const logger = require('./logger');
 const qrserver = require('./qrserver');
 
 const RECONNECT_DELAY_MS = 10_000;
-const SESSION_DATA_PATH = './data/session';
-
-// Chromium leaves lock files (SingletonLock/SingletonSocket/SingletonCookie)
-// in its profile folder while running, to stop two instances sharing one
-// profile. On a persistent volume (Railway), a crash or forced restart can
-// leave these behind, causing the next launch to fail with
-// "profile appears to be in use by another Chromium process" (Code: 21).
-// Safe to remove on startup since we know no other instance is running yet.
-function clearStaleChromiumLocks(rootDir) {
-  const lockNames = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
-  if (!fs.existsSync(rootDir)) return;
-
-  const stack = [rootDir];
-  while (stack.length) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-      } else if (lockNames.has(entry.name)) {
-        try {
-          fs.unlinkSync(fullPath);
-          logger.info(`Removed stale Chromium lock file: ${fullPath}`);
-        } catch (err) {
-          logger.warn(`Could not remove lock file ${fullPath}:`, err.message);
-        }
-      }
-    }
-  }
-}
 
 function createClient() {
   const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: SESSION_DATA_PATH }),
+    authStrategy: new LocalAuth({ dataPath: './data/session' }),
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -68,14 +30,6 @@ function createClient() {
         // round-trip broke). Removed — stability over memory here.
       ],
     },
-  });
-
-  client.on('loading_screen', (percent, message) => {
-    logger.info(`[loading_screen] ${percent}% - ${message}`);
-  });
-
-  client.on('change_state', (state) => {
-    logger.info(`[change_state] ${state}`);
   });
 
   client.on('qr', (qr) => {
@@ -109,48 +63,21 @@ function createClient() {
 
   client.on('message', async (message) => {
     try {
-      const chat = await message.getChat();
-      logger.info(
-        `[msg] from=${message.from} author=${message.author || '(none)'} isGroup=${chat.isGroup} body="${(message.body || '').slice(0, 50)}"`
-      );
-
       const wasCommand = await handleCommand(client, message);
       if (wasCommand) return;
 
       await handleMessage(client, message);
     } catch (err) {
-      logger.error('Error handling message:', err.message);
+      logger.error('Error handling message:', err && err.stack ? err.stack : String(err));
     }
   });
 
   return client;
 }
 
-clearStaleChromiumLocks(SESSION_DATA_PATH);
-
 const client = createClient();
 qrserver.startServer();
-
-// Watchdog: if nothing has happened within 90s of boot (no qr, no ready,
-// no error), Puppeteer/WhatsApp Web is likely stuck silently — log it
-// loudly instead of leaving the page frozen on "starting" with no clue why.
-let clientProgressed = false;
-['qr', 'ready', 'auth_failure'].forEach((evt) => {
-  client.once(evt, () => { clientProgressed = true; });
-});
-setTimeout(() => {
-  if (!clientProgressed) {
-    logger.warn(
-      'No qr/ready/auth_failure event 90s after startup — client.initialize() appears to be ' +
-      'hanging silently (likely stuck launching Chromium or loading WhatsApp Web).'
-    );
-  }
-}, 90_000);
-
-client.initialize().catch((err) => {
-  logger.error('Failed to initialize WhatsApp client:', err.message);
-  qrserver.setStatus('starting'); // still starting so page keeps showing the real status
-});
+client.initialize();
 
 // Graceful shutdown so the SQLite connection and session files aren't left
 // in a bad state if the process is stopped (e.g. by the host platform).

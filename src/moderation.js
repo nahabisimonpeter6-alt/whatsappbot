@@ -34,39 +34,28 @@ function hasNonWhitelistedLink(text, whitelist) {
 
 /**
  * Check whether the message sender is currently a group admin.
- */
-/**
- * Extract the numeric/user portion of a WhatsApp ID, ignoring the server
- * suffix (@c.us, @s.whatsapp.net, @lid, etc). The same person can appear
- * with different suffixes in different places (message.author vs a group's
- * participant list), especially amid WhatsApp's ongoing rollout of privacy
- * "@lid" identifiers — comparing full serialized IDs can silently fail even
- * when it's really the same person.
- */
-function idUserPart(serializedId) {
-  return (serializedId || '').split('@')[0];
-}
-
-/**
- * Check whether the message sender is currently a group admin.
- * Tries an exact ID match first, then falls back to comparing just the
- * user/number portion (ignoring server suffix) in case the sender's ID and
- * the group's participant list represent the same person differently.
+ * Defensive: chat.participants can occasionally be missing or stale right
+ * after (re)connecting, which previously caused an uncaught crash here.
  */
 async function isSenderAdmin(chat, senderId) {
-  let participant = chat.participants.find((p) => p.id._serialized === senderId);
+  if (!senderId) return false;
 
-  if (!participant) {
-    const senderUser = idUserPart(senderId);
-    participant = chat.participants.find((p) => idUserPart(p.id._serialized) === senderUser);
+  let participants = chat.participants;
+  if (!Array.isArray(participants) || participants.length === 0) {
+    // Try to refresh group metadata once before giving up.
+    try {
+      const fresh = await chat.client.getChatById(chat.id._serialized);
+      participants = fresh.participants;
+    } catch (err) {
+      logger.warn(`Could not refresh participants for "${chat.name}":`, err.message);
+      return false; // fail safe: treat as non-admin rather than crashing
+    }
   }
 
-  const result = !!(participant && (participant.isAdmin || participant.isSuperAdmin));
-  logger.info(
-    `[admin-check] senderId=${senderId} matchedParticipant=${!!participant} isAdmin=${result} ` +
-    `participantIds=${chat.participants.map((p) => p.id._serialized).join(',')}`
-  );
-  return result;
+  if (!Array.isArray(participants)) return false;
+
+  const participant = participants.find((p) => p.id && p.id._serialized === senderId);
+  return !!(participant && (participant.isAdmin || participant.isSuperAdmin));
 }
 
 async function warnAndMaybeRemove(chat, senderId, reason) {

@@ -13,7 +13,6 @@ const db = new Database(path.join(DATA_DIR, 'moderation.db'));
 
 // Make sure the data directory exists and pragma is sane.
 db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 5000'); // wait up to 5s instead of throwing SQLITE_BUSY on write contention
 
 // Table: one row per (group, user) pair, tracking how many warnings they have.
 db.exec(`
