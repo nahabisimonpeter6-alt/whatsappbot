@@ -77,7 +77,10 @@ function createClient() {
 
 const client = createClient();
 qrserver.startServer();
-client.initialize();
+client.initialize().catch((err) => {
+  logger.error('Failed to initialize WhatsApp client:', err.message);
+  qrserver.setStatus('starting'); // still starting so page keeps showing the real status
+});
 
 // Graceful shutdown so the SQLite connection and session files aren't left
 // in a bad state if the process is stopped (e.g. by the host platform).

@@ -5,11 +5,24 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
+    ca-certificates \
     libnss3 \
     libatk-bridge2.0-0 \
+    libatk1.0-0 \
     libgtk-3-0 \
     libxss1 \
     libasound2 \
+    libgbm1 \
+    libxkbcommon0 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxfixes3 \
+    libxext6 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libdrm2 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
