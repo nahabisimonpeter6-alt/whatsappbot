@@ -54,19 +54,43 @@ function idUserPart(serializedId) {
  * the group's participant list represent the same person differently.
  */
 async function isSenderAdmin(chat, senderId) {
-  let participant = chat.participants.find((p) => p.id._serialized === senderId);
+  if (!senderId) return false;
+
+  let participants = chat.participants;
+
+  // Known whatsapp-web.js compatibility issue: chat.participants can come
+  // back undefined for a chat object right after fetching, when the
+  // library's internal WhatsApp Web shims lag behind a WhatsApp update
+  // (see pedroslopez/whatsapp-web.js #3575, #3572). Retry once via a fresh
+  // fetch before giving up — this alone resolves it in most cases.
+  if (!Array.isArray(participants)) {
+    try {
+      const fresh = await chat.client.getChatById(chat.id._serialized);
+      participants = fresh.participants;
+    } catch (err) {
+      logger.error(
+        '\n========== isSenderAdmin: participant fetch failed ==========\n' +
+        `Chat: ${chat?.name || '(unknown)'} (${chat?.id?._serialized || '(unknown id)'})\n` +
+        `Sender: ${senderId}\n` +
+        `Error name: ${err?.name || '(no name)'}\n` +
+        `Error message: ${err?.message || String(err)}\n` +
+        `Stack: ${err?.stack || '(no stack)'}\n` +
+        '================================================================'
+      );
+      return false; // fail safe: treat as non-admin rather than crashing the pipeline
+    }
+  }
+
+  if (!Array.isArray(participants)) return false;
+
+  let participant = participants.find((p) => p.id && p.id._serialized === senderId);
 
   if (!participant) {
     const senderUser = idUserPart(senderId);
-    participant = chat.participants.find((p) => idUserPart(p.id._serialized) === senderUser);
+    participant = participants.find((p) => p.id && idUserPart(p.id._serialized) === senderUser);
   }
 
-  const result = !!(participant && (participant.isAdmin || participant.isSuperAdmin));
-  logger.info(
-    `[admin-check] senderId=${senderId} matchedParticipant=${!!participant} isAdmin=${result} ` +
-    `participantIds=${chat.participants.map((p) => p.id._serialized).join(',')}`
-  );
-  return result;
+  return !!(participant && (participant.isAdmin || participant.isSuperAdmin));
 }
 
 async function warnAndMaybeRemove(chat, senderId, reason) {
@@ -122,7 +146,12 @@ async function handleMessage(client, message) {
   try {
     await message.delete(true); // delete for everyone (requires bot to be admin)
   } catch (err) {
-    logger.error('Failed to delete message with link:', err.message);
+    logger.error(
+      '\n========== LINK DELETE FAILED ==========\n' +
+      `Chat: ${chat?.name}\nSender: ${senderId}\nBody: ${(message.body || '').slice(0, 100)}\n` +
+      `Error name: ${err?.name}\nError message: ${err?.message}\nStack: ${err?.stack}\n` +
+      '========================================='
+    );
     return; // Bot likely isn't admin — don't proceed to warn/remove.
   }
 

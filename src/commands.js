@@ -33,15 +33,33 @@ async function handleCommand(client, message) {
   const body = (message.body || '').trim();
   if (!body.startsWith('.')) return false;
 
-  const chat = await message.getChat();
-  if (!chat.isGroup) return false;
+  try {
+    const chat = await message.getChat();
+    if (!chat.isGroup) return false;
 
-  const senderId = message.author || message.from;
-  if (!(await isSenderAdmin(chat, senderId))) return false; // ignore silently for non-admins
+    const senderId = message.author || message.from;
+    if (!(await isSenderAdmin(chat, senderId))) return false; // ignore silently for non-admins
 
-  const parts = body.split(/\s+/);
-  const command = parts[0].toLowerCase();
-  const groupId = chat.id._serialized;
+    const parts = body.split(/\s+/);
+    const command = parts[0].toLowerCase();
+    const groupId = chat.id._serialized;
+
+    return await runCommand(command, parts, chat, senderId, groupId, message);
+  } catch (err) {
+    logger.error(
+      '\n========== COMMAND HANDLER ERROR ==========\n' +
+      `Command: ${body.split(/\s+/)[0]}\n` +
+      `Message: ${body.slice(0, 100)}\n` +
+      `Error name: ${err?.name || '(no name)'}\n` +
+      `Error message: ${err?.message || String(err)}\n` +
+      `Stack: ${err?.stack || '(no stack)'}\n` +
+      '============================================'
+    );
+    return true; // we recognized it as a command attempt even though it failed — don't fall through to link moderation
+  }
+}
+
+async function runCommand(command, parts, chat, senderId, groupId, message) {
 
   switch (command) {
     case '.d': {
@@ -55,7 +73,12 @@ async function handleCommand(client, message) {
         await message.delete(true).catch(() => {});
         logger.info(`${senderId} deleted a message via .d in "${chat.name}".`);
       } catch (err) {
-        logger.error('.d failed:', err.message);
+        logger.error(
+          '\n========== .d FAILED ==========\n' +
+          `Chat: ${chat?.name}\nSender: ${senderId}\n` +
+          `Error name: ${err?.name}\nError message: ${err?.message}\nStack: ${err?.stack}\n` +
+          '================================'
+        );
       }
       return true;
     }
@@ -73,7 +96,12 @@ async function handleCommand(client, message) {
         });
         logger.info(`${senderId} removed ${targetId} via .r in "${chat.name}".`);
       } catch (err) {
-        logger.error('.r failed:', err.message);
+        logger.error(
+          '\n========== .r FAILED ==========\n' +
+          `Chat: ${chat?.name}\nSender: ${senderId}\nTarget: ${targetId}\n` +
+          `Error name: ${err?.name}\nError message: ${err?.message}\nStack: ${err?.stack}\n` +
+          '================================'
+        );
       }
       return true;
     }

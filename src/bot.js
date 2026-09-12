@@ -108,8 +108,9 @@ function createClient() {
   });
 
   client.on('message', async (message) => {
+    let chat;
     try {
-      const chat = await message.getChat();
+      chat = await message.getChat();
       logger.info(
         `[msg] from=${message.from} author=${message.author || '(none)'} isGroup=${chat.isGroup} body="${(message.body || '').slice(0, 50)}"`
       );
@@ -119,7 +120,20 @@ function createClient() {
 
       await handleMessage(client, message);
     } catch (err) {
-      logger.error('Error handling message:', err.message);
+      logger.error(
+        '\n========== MESSAGE HANDLER ERROR ==========\n' +
+        `Command: ${(message?.body || '').split(/\s+/)[0] || '(none)'}\n` +
+        `Message body: ${(message?.body || '').slice(0, 100)}\n` +
+        `Message type: ${message?.type || '(unknown)'}\n` +
+        `From: ${message?.from || '(unknown)'}\n` +
+        `Author: ${message?.author || '(none — not a group msg)'}\n` +
+        `Is group: ${chat?.isGroup ?? '(chat unavailable)'}\n` +
+        `From me: ${message?.fromMe ?? '(unknown)'}\n` +
+        `Error name: ${err?.name || '(no name)'}\n` +
+        `Error message: ${err?.message || String(err)}\n` +
+        `Stack: ${err?.stack || '(no stack)'}\n` +
+        '============================================'
+      );
     }
   });
 
