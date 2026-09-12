@@ -51,8 +51,28 @@ function clearStaleChromiumLocks(rootDir) {
 }
 
 function createClient() {
+  // Optional: pin a specific WhatsApp Web version via webVersionCache, as a
+  // lever against the known intermittent whatsapp-web.js "stuck at 99-100%,
+  // ready never fires" bug (wwebjs/whatsapp-web.js #5758, #5768, #127084).
+  // Off by default — only activates if WWEB_VERSION is set, so it's easy to
+  // try and easy to revert without another code change. Note: one report in
+  // that same GitHub thread said this specific fix did NOT resolve their
+  // case, so treat this as a lever to test, not a guaranteed fix.
+  const pinnedVersion = process.env.WWEB_VERSION;
+  const webVersionCache = pinnedVersion
+    ? {
+        type: 'remote',
+        remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${pinnedVersion}.html`,
+      }
+    : undefined;
+
+  if (pinnedVersion) {
+    logger.info(`Pinning WhatsApp Web version to ${pinnedVersion} (WWEB_VERSION env var set).`);
+  }
+
   const client = new Client({
     authStrategy: new LocalAuth({ dataPath: SESSION_DATA_PATH }),
+    ...(webVersionCache ? { webVersionCache } : {}),
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
