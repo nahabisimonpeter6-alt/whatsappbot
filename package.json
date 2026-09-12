@@ -1,0 +1,15 @@
+{
+  "name": "whatsapp-mod-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp group moderation bot - link detection, warnings, removal, admin commands",
+  "main": "src/bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
+  "dependencies": {
+    "whatsapp-web.js": "^1.26.0",
+    "qrcode-terminal": "^0.12.0",
+    "better-sqlite3": "^11.3.0"
+  }
+}
