@@ -44,7 +44,7 @@ async function handleCommand(client, message) {
     const command = parts[0].toLowerCase();
     const groupId = chat.id._serialized;
 
-    return await runCommand(command, parts, chat, senderId, groupId, message);
+    return await runCommand(client, command, parts, chat, senderId, groupId, message);
   } catch (err) {
     logger.error(
       '\n========== COMMAND HANDLER ERROR ==========\n' +
@@ -59,7 +59,7 @@ async function handleCommand(client, message) {
   }
 }
 
-async function runCommand(command, parts, chat, senderId, groupId, message) {
+async function runCommand(client, command, parts, chat, senderId, groupId, message) {
 
   switch (command) {
     case '.d': {
@@ -112,7 +112,7 @@ async function runCommand(command, parts, chat, senderId, groupId, message) {
         await chat.sendMessage('Tag the user you want to warn: .warn @user');
         return true;
       }
-      await warnAndMaybeRemove(chat, targetId, 'issued a manual warning by an admin');
+      await warnAndMaybeRemove(client, chat, groupId, targetId, 'issued a manual warning by an admin');
       return true;
     }
 
