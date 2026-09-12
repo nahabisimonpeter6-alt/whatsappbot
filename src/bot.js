@@ -128,18 +128,16 @@ function createClient() {
   });
 
   client.on('message', async (message) => {
-    let chat;
+    // Do not resolve the chat globally before routing the message.
+    // WhatsApp Web can throw while resolving chats/participants for newer
+    // @lid sender identities. The moderation handler intentionally uses
+    // message.from directly for group detection and must still get a chance
+    // to process links even when chat resolution is unavailable.
     try {
-      try {
-        chat = await message.getChat();
-      } catch (getChatErr) {
-        // Fallback: retry via the group id directly. Doesn't always help
-        // (see known LID limitation below) but costs nothing to try.
-        chat = await client.getChatById(message.from);
-      }
+      const isGroup = typeof message.from === 'string' && message.from.endsWith('@g.us');
 
       logger.info(
-        `[msg] from=${message.from} author=${message.author || '(none)'} isGroup=${chat.isGroup} body="${(message.body || '').slice(0, 50)}"`
+        `[msg] from=${message.from || '(unknown)'} author=${message.author || '(none)'} isGroup=${isGroup} body="${(message.body || '').slice(0, 50)}"`
       );
 
       const wasCommand = await handleCommand(client, message);
@@ -170,7 +168,7 @@ function createClient() {
         `Message type: ${message?.type || '(unknown)'}\n` +
         `From: ${message?.from || '(unknown)'}\n` +
         `Author: ${message?.author || '(none — not a group msg)'}\n` +
-        `Is group: ${chat?.isGroup ?? '(chat unavailable)'}\n` +
+        `Is group: ${typeof message?.from === 'string' && message.from.endsWith('@g.us')}\n` +
         `From me: ${message?.fromMe ?? '(unknown)'}\n` +
         `Error name: ${err?.name || '(no name)'}\n` +
         `Error message: ${err?.message || String(err)}\n` +
