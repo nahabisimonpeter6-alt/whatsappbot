@@ -21,13 +21,8 @@ const {
 const logger = require('./logger');
 
 async function getMentionedUserId(message) {
-  try {
-    const mentions = await message.getMentions();
-    return mentions.length > 0 ? mentions[0].id._serialized : null;
-  } catch (err) {
-    logger.warn('Failed to read mentions from message:', err.message);
-    return null;
-  }
+  const mentions = await message.getMentions();
+  return mentions.length > 0 ? mentions[0].id._serialized : null;
 }
 
 /**
