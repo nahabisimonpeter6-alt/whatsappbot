@@ -1,16 +1,18 @@
 {
-  "name": "whatsapp-mod-bot",
+  "name": "whatsapp-bot-original",
   "version": "1.0.0",
-  "description": "WhatsApp group moderation bot - link detection, warnings, removal, admin commands",
+  "private": true,
+  "description": "Fresh WhatsApp group moderation bot built independently from the previous failed project.",
   "main": "src/bot.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node src/bot.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "whatsapp-web.js": "^1.34.7",
+    "express": "^4.21.2",
     "qrcode-terminal": "^0.12.0",
-    "qrcode": "^1.5.4",
-    "better-sqlite3": "^11.3.0"
+    "whatsapp-web.js": "^1.34.1"
   }
 }
