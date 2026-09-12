@@ -4,9 +4,11 @@
 
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const { handleCommand } = require('./commands');
 const { handleMessage } = require('./moderation');
 const logger = require('./logger');
+const qrserver = require('./qrserver');
 
 const RECONNECT_DELAY_MS = 10_000;
 
@@ -15,21 +17,31 @@ function createClient() {
     authStrategy: new LocalAuth({ dataPath: './data/session' }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     },
   });
 
   client.on('qr', (qr) => {
-    logger.info('QR code generated — scan with the bot account (WhatsApp > Linked Devices > Link a Device).');
+    logger.info('QR code generated — visit the app URL in a browser, or scan the terminal QR below.');
     qrcode.generate(qr, { small: true });
+    QRCode.toDataURL(qr, (err, dataUrl) => {
+      if (err) {
+        logger.error('Failed to generate QR image for status page:', err.message);
+        return;
+      }
+      qrserver.setQr(dataUrl);
+    });
   });
 
   client.on('ready', () => {
     logger.info('Bot is ready and connected.');
+    qrserver.setStatus('ready');
   });
 
   client.on('disconnected', (reason) => {
     logger.warn('Client disconnected:', reason, `— reconnecting in ${RECONNECT_DELAY_MS / 1000}s.`);
+    qrserver.setStatus('disconnected');
     setTimeout(() => {
       client.initialize().catch((err) => logger.error('Reconnect attempt failed:', err.message));
     }, RECONNECT_DELAY_MS);
@@ -54,6 +66,7 @@ function createClient() {
 }
 
 const client = createClient();
+qrserver.startServer();
 client.initialize();
 
 // Graceful shutdown so the SQLite connection and session files aren't left

@@ -37,14 +37,30 @@ sender, and removes them after 3 warnings. Also supports admin-only commands.
 - That number must be made an **admin** of the target group (the bot cannot
   promote itself).
 
-## Setup
+## Deploying to Railway
+
+1. Push this project to a GitHub repo (keep it **private** — it's tied to a real phone number and group).
+2. On railway.com: New Project → Deploy from GitHub repo → select this repo.
+   Railway will detect the `Dockerfile` and build from it (installs Chromium
+   automatically, so Puppeteer works in the container).
+3. Add a **persistent volume** mounted at `/app/data` (Project → Volumes).
+   Without this, every redeploy wipes your login session and the warning
+   database, forcing a QR rescan each time.
+4. Deploy. Once it's running, open the app's public URL in a browser —
+   it shows a live status page with the QR code as a scannable image (no
+   need to read ASCII text in the logs). Scan it with the bot's WhatsApp
+   number: **Settings → Linked Devices → Link a Device**.
+5. The page updates automatically to "Bot is connected and running" once
+   the scan succeeds.
+
+## Running locally instead
 
 ```bash
 npm install
 npm start
 ```
 
-On first run, a QR code will print in your terminal. Open WhatsApp on the
+On first run, a QR code prints in your terminal. Open WhatsApp on the
 bot's phone number → **Settings → Linked Devices → Link a Device** → scan it.
 
 The session is saved to `./data/session`, so you won't need to re-scan on
@@ -82,5 +98,7 @@ src/
   antiflood.js   - In-memory sliding-window spam/flood detection
   db.js          - SQLite storage for per-user warning counts
   logger.js      - Timestamped console + daily rotating file logging
+  qrserver.js    - Browser-viewable status/QR page (needed for Railway)
+Dockerfile       - Node + Chromium build, for Railway/any container host
 data/            - Created automatically: session, database, logs (gitignored)
 ```

@@ -5,8 +5,12 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const db = new Database(path.join(__dirname, '..', 'data', 'moderation.db'));
+const DATA_DIR = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const db = new Database(path.join(DATA_DIR, 'moderation.db'));
 
 const DEFAULT_MAX_WARNINGS = 3;
 
