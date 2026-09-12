@@ -24,8 +24,10 @@ function createClient() {
         '--disable-dev-shm-usage', // avoid /dev/shm size limits crashing Chromium in containers
         '--disable-accelerated-2d-canvas',
         '--disable-gpu',
-        '--no-zygote',
-        '--single-process', // reduces memory footprint at some cost to stability — worth it on small containers
+        // NOTE: --single-process and --no-zygote were tried for memory savings
+        // but caused the QR handshake with WhatsApp's servers to fail after
+        // scanning (page loaded enough to show a QR, but the linking
+        // round-trip broke). Removed — stability over memory here.
       ],
     },
   });
