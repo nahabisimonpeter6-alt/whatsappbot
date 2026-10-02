@@ -1,4 +1,9 @@
 node_modules
-data/session
+data
+.wwebjs_auth
+.wwebjs_cache
+.env
+.env.*
 .git
-npm-debug.log
+npm-debug.log*
+coverage

@@ -1,45 +1,289 @@
-# Clean WhatsApp Bot for Railway
+# WhatsApp moderation bot
 
-This project is independently built and does not use the previous bot's source files.
+A WhatsApp Web bot with welcomes, link moderation, daily activity announcements, private admin control, and event/schedule rules. Commands from people, rules, and schedules use one command engine.
+
+## Local setup
+
+Use Node.js 20 or newer and install Chromium. The default browser path is `/usr/bin/chromium`; set `PUPPETEER_EXECUTABLE_PATH` if your installation is elsewhere.
+
+```sh
+PUPPETEER_SKIP_DOWNLOAD=true npm ci
+npm test
+npm start
+```
+
+Scan the terminal QR code using WhatsApp **Linked devices**. Add the bot to your group and make it an administrator. The account must stay paired for moderation to work. Sessions are stored in `data/session` locally and excluded from Git.
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP listening port |
+| `PREFIX` | `.` | Command prefix |
+| `SESSION_PATH` | Project's `data/session` folder | Persistent WhatsApp session storage |
+| `AUTOMATION_STATE_PATH` | `automations.json` inside `SESSION_PATH` | Saved settings, schedules, warnings, rules, approvals, and audit records |
+| `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Installed browser executable |
+| `OWNER_NUMBERS` | Empty | Comma-separated international owner phone numbers, e.g. `256700123456,256700654321` |
+
+For example, use `PREFIX='!' npm start` to change commands to `!d`, `!r`, and `!ping`.
+
+## Current behavior
+
+- Group members' web links are deleted for everyone when WhatsApp permits revocation and the bot is a group admin.
+- Group admins can post links. Owners, delegated moderators, whitelisted members, and the bot are also protected from automated moderation. Identity checks resolve phone-number IDs and WhatsApp LIDs.
+- New members receive a welcome message that mentions them, states the group link rule, and explains how to view today's activities.
+- After detecting a member's link, the bot mentions that member and posts an incrementing warning. Warnings still work if the bot lacks deletion permission. If identity lookup fails, moderation is skipped and the error is logged rather than risking deletion of an admin's message.
+- Explicit HTTP/HTTPS URLs, `www` domains, and bare domains with recognized public suffixes count as links, including domains enclosed in parentheses. Ordinary filenames such as `report.pdf` and email addresses do not. Text that is also a real domain, such as `notes.md`, is treated as a link.
+- Reply to a message with `.d` to revoke it for everyone. The sender must be an owner, admin, or delegated moderator; the bot must be an admin. Missing permissions or an expired revocation window produce an error; deletion never falls back to the bot's local copy.
+- Reply to a member's message with `.r` to request removal. Both the sender and bot must be admins. Phone and LID targets are supported; members who have already left are rejected.
+- `.ping` replies `pong` in groups or direct chats.
+- Commands must come from another account. Messages sent by the linked bot account are ignored.
+
+Warnings and link-offence counts persist across restarts. By default, the first three link-containing messages are deleted and receive targeted warnings; the **fourth link offence removes the member** when the bot is a group admin. Each message counts as one offence even if it contains several links. Unrelated manual warnings do not count as link offences. Existing installations recover previous link offences from retained successful link-warning audit records, up to the saved warning total; older records outside the retained audit cannot be recovered. Recovery does not remove anyone at startup: the next link at or above the threshold triggers removal.
+
+The enabled default rules welcome members, moderate links, remove repeat link offenders, enforce local mutes, and remove locally banned members who rejoin. Raid locking is disabled by default. `.set autopilot off` or `.panic` pauses these rules and scheduled announcements; manual commands remain available. Approval, dry-run, disabled commands, protected-member checks, and the hourly destructive-action cap also apply to repeated-link removal.
+
+## Roles and admin commands
+
+| Role | Default access |
+| --- | --- |
+| Owner (`OWNER_NUMBERS`) | Admin controls in any group the bot can access; `.panic all` / `.resume all` |
+| Group admin | Admin controls and moderation in their own group |
+| Delegated moderator | Warn/unwarn, delete, local mute/unmute, and send a message |
+| Member | Ping, today's activities, and group FAQ answers |
+
+Use a full international phone number, `NUMBER@c.us`, or `NUMBER@lid` as a target. Phone and LID numbers can differ; the bot resolves their identities rather than comparing digits. Targets can also come from a quoted message. `@sender` is available inside rules. Commands and permission overrides belong to the current group.
+
+| Command | Purpose |
+| --- | --- |
+| `.help` | List member, moderation, activity, and admin commands |
+| `.antilink on`, `.antilink off`, `.antilink status` | Restore/enable default link deletion, warnings and fourth-offence removal, disable these rules, or show moderation blockers |
+| `.warn USER [reason]` / `.unwarn USER` | Add/remove a warning |
+| `.d` / `.delete MESSAGE_ID` | Delete a quoted message or specified message for everyone |
+| `.r` / `.remove USER` | Remove the quoted member or specified member |
+| `.mute USER MINUTES` / `.unmute USER` | Locally delete that member's future messages; duration 1–1440 minutes |
+| `.ban USER` / `.unban USER` | Remove and store a local rejoin ban; unban removes the local record |
+| `.lock` / `.unlock` | Allow only admins / all members to post |
+| `.massdelete [@USER] COUNT` | Revoke up to 50 recent messages; automated use excludes protected members |
+| `.mod add USER`, `.mod remove USER`, `.mod list` | Delegate/revoke limited moderation access |
+| `.whitelist add USER`, `.whitelist remove USER`, `.whitelist list` | Protect a member from automatic moderation |
+| `.perm COMMAND member\|moderator\|admin\|owner` | Change a command's minimum role |
+| `.cmd enable COMMAND` / `.cmd disable COMMAND` | Enable/disable a command |
+| `.status` | Automation settings, bot admin status, timers, warnings, removals this hour, pending approvals, and recent failures |
+| `.config export` / `.config import JSON` | Back up/restore group configuration, without replacing audit, warnings, proposals, or delivery history |
+| `.panic` / `.resume` | Pause/resume all automation in this group |
+| `.audit [1–50] [actor]` | Recent action IDs and results; e.g. `.audit 20 rule` or `.audit 10 300@lid` |
+| `.undo ACTION_ID` | Reverse a supported action recorded in the audit |
+| `.say MESSAGE` | Send a group message |
+
+Admin controls have an admin role floor and cannot be disabled, so a permission change cannot hand configuration control to members or disable recovery. Operational commands can have their minimum roles changed. The bot still needs the relevant WhatsApp permissions for deletions, removals, and group locking.
+
+### If links are not being removed
+
+Run `.antilink status` from another admin account in the group. Make the **linked bot account** a group admin. `.antilink on` restores default link deletion, warnings and fourth-offence removal, and enables the `delete`, `warn` and `remove` commands. It preserves offence counts, approval, dry-run, panic, and autopilot settings; status shows which settings still prevent immediate moderation. `.antilink off` disables both default link rules; custom rules remain independently configurable.
+
+Use `.rule disable builtin-link-removal` to keep deleting links and warning without removing members. To change only the removal threshold, edit the existing rule, for example `.rule edit builtin-link-removal WHEN link_warning_count_reached(5) IF sender_role=member THEN remove @sender`. This removes from the fifth offence. `.unwarn USER` subtracts one general warning and one link offence, down to zero. Undoing a manual warning leaves the link count unchanged; undoing a link warning reverses that offence as well. `.status` shows both counts. Calling `.antilink on` restores the default threshold of four.
+
+For immediate moderation, an admin can use:
+
+```text
+.antilink on
+.set autopilot on
+.set dryrun off
+.set approval off
+.resume
+```
+
+Test a fresh link using a **different, non-admin account**. The linked account's messages are ignored, and admins/protected members are exempt. When deletion is refused, the default rule still attempts a warning that mentions the sender. Check `.audit 10` for revocation or sending failures and `.antilink status` for the hourly cap.
+
+The opaque `r: r` / `getChatById` failure can occur when WhatsApp Web renames message keys from `_serialized` to `$1`, causing the pinned library to issue an invalid IndexedDB lookup. The startup compatibility adapter in `src/whatsapp-compat.js` adapts the library's injected group lookup, incoming message serialization, send, and edit functions in memory before initialization. It follows the [upstream message-key fix](https://github.com/wwebjs/whatsapp-web.js/pull/201848), works on both field names, and remains active after reinstalling dependencies. Restart with `npm start` to load it. Sessions do not need to be deleted. Review the adapter alongside revocation when upgrading the pinned library.
+
+To control a group privately, DM the bot from another account:
+
+```text
+.groups
+.use GROUP_ID
+.status
+.activity list
+.panic
+.resume
+```
+
+`.use` also accepts a unique exact group name. The bot checks your current role in the selected group on **every command**. Only owners and current admins can use private control, even if a command is normally available to members. Selection resets when the process restarts. An owner can use `.panic all` or `.resume all` without selecting a group.
+
+Admin shortcuts and FAQs:
+
+```text
+.alias today activities
+.macro check status; activity list
+.addcmd rules Be respectful. Group members must not post links.
+.addcmd price Tickets cost 5,000 UGX.
+.cmds
+.delcmd price
+```
+
+Choose an unused name and run `.today` or `.check`; every underlying step checks permissions, rate limits, disabled commands, and dry-run state. A macro stops after a denied/failed step and does not roll back completed steps. FAQ replies match the first word of a message, with or without the prefix (`rules` or `.rules`). Alias/macro chains are bounded and cycles are rejected. To remove shortcuts, export configuration, remove the relevant mapping, and import it.
+
+## Automation settings and approvals
+
+```text
+.set autopilot on
+.set dryrun on
+.set approval destructive
+.set approvalttl 10
+.set cap 20
+.set rate 30
+.set raidcount 5
+.set raidwindow 60
+```
+
+Defaults: autopilot on, dry-run off, approvals off, 10-minute proposal expiry, 20 automated destructive attempts per rolling hour, 30 operational commands per person per minute, and raid detection at 5 joins within 60 seconds. Automatic actors have a separate 120-command/minute limit. `approvalttl` uses minutes and `raidwindow` uses seconds.
+
+Approval modes are `off`, `destructive`, and `all`. Destructive mode proposes automatic deletions, removals, bans, mass deletions, and locking before acting. All mode also proposes automatic messages, warnings, welcomes, and other operational effects. Admin configuration changes and manual moderation do not require proposals. Proposals appear in the group and survive normal restarts:
+
+```text
+.yes PROPOSAL_ID
+.no PROPOSAL_ID
+```
+
+Only current admins/owners can decide. Approval rechecks target identity/protection, bot privileges, panic, enabled commands, and the hourly cap. A proposal can execute once and cannot be approved after expiry. Mass deletion proposals retain concrete message IDs rather than selecting newer messages. Agenda proposals retain their date; an old proposal cannot send a different day's agenda. A crash while executing an approved action leaves the proposal claimed; inspect the audit and actual group state rather than retrying automatically.
+
+Dry-run suppresses operational effects, including warning-count changes, revocation, removal, and normal outgoing responses. It posts a simulation diagnostic and writes a dry-run audit record. Admin controls remain usable to turn dry-run off. The automated destructive cap counts attempts, reserving capacity before acting; mass deletion reserves one unit per selected message. Exceeding the cap pauses automation and alerts admins. Failed attempts still consume their reservation. Review `.audit` and `.status` before `.resume`.
+
+## Rules syntax
+
+```text
+WHEN trigger(argument) [IF condition AND condition] THEN command; command
+```
+
+Admins manage rules with `.rule add SOURCE`, `.rule edit ID SOURCE`, `.rule list`, `.rule remove ID`, `.rule enable ID`, `.rule disable ID`, `.rule cooldown ID SECONDS`, and `.rule test ID`. New rules start enabled with a 60-second cooldown; valid cooldowns are 0–86400 seconds. Editing preserves the ID, enabled state, and cooldown. Up to 50 rules can belong to one group.
+
+```text
+.rule add WHEN message_matches("hello") IF sender_role=member THEN say Hello @sender
+.rule edit builtin-link-removal WHEN link_warning_count_reached(4) IF sender_role=member THEN remove @sender
+.rule add WHEN schedule("08:00") THEN say Today's meeting starts at 14:00.
+.rule add WHEN schedule("0 8 * * 1-5") THEN activities
+.rule add WHEN keyword_in_media_caption("sale") IF message_type=image THEN warn @sender Please ask an admin before advertising.
+.rule add WHEN member_left THEN say A member has left the group.
+.rule add WHEN admin_changed THEN say Group admin permissions have changed.
+.rule add WHEN bot_became_admin THEN say Moderation is ready.
+.rule enable builtin-raid
+.rule edit builtin-welcome WHEN member_joined THEN welcome; say Please read the group description.
+```
+
+Available triggers: `message_matches("REGEX")`, `member_joined`, `member_left`, `warn_count_reached(N)` (all warnings at or above N), `link_warning_count_reached(N)` (only link offences at or above N), `raid_detected`, `schedule("HH:MM")`, `schedule("FIVE-FIELD CRON")`, `admin_changed`, `bot_became_admin`, and `keyword_in_media_caption("REGEX")`. Internal editable defaults also use `link_detected`, `member_muted`, and `member_banned`. Regexes are case-insensitive Unicode patterns, at most 256 characters, screened by `safe-regex2`; only the first 4,000 message characters are matched. This screening is a heuristic.
+
+Conditions: `sender_role=owner|admin|moderator|member`, `message_type=chat|image|...`, `time_window=07:00-18:00` (inclusive; midnight-crossing windows work), `setting.autopilot=true|false`, `setting.dryRun=true|false`, `setting.approval=off|destructive|all`, and `account_age_days>=N` / `<=N` / `=N` when supplied by an event. WhatsApp Web does not supply account creation age here: age-conditioned rules skip safely and log the missing information.
+
+Scheduled rules use the group's activity timezone. The scheduler checks each minute after pairing and suppresses repeat execution within the same matching minute, including normal restarts. Scheduled rules do not catch up missed times; the daily agenda has its separate catch-up behavior described below. Raid detection counts joins observed by this process and resets after restart. A rule cannot trigger itself through a command outcome, and chained execution stops at depth three.
+
+`.rule test ID` simulates against the last ordinary message observed in the group, without changing warnings or applying actions; it writes diagnostic audit records and bypasses cooldown for the simulation. Join/leave/admin triggers can use that message's sender as a simulated event target. Schedule rules still require a matching current time. Results can therefore differ from a real notification. Disabled rules can be simulated.
+
+Rules use only commands marked `automationSafe`. Administrative configuration, permissions, approvals, undo, and audit commands cannot run automatically. Alias/macro children are checked independently. Automated moderation protects owners, admins, delegated moderators, whitelist members, and the bot; welcomes and informational group messages can mention them. Unresolved identity/permission lookups cause a skip and log entry.
+
+## Audit and reversal
+
+Each group retains its latest 200 audit records, including actor type/ID, command arguments, target, result, dry-run flag, and approver. A side-effect intent is saved before acting; if it cannot be saved, the operation stops. Audit-write failures pause automation in memory until recovery and `.resume`.
+
+`.undo ID` removes an added warning, restores local mute/ban state, or restores group posting permissions when the previous value was known. An action can be undone once. Disabled commands, current permissions, bot privileges, and dry-run still apply to the reversal. Deleted messages cannot be restored. Undoing a ban clears the local ban but does not re-add the removed member; an admin must invite them. A completed standalone removal has no automatic reversal. State after a crash between an external action and its final audit update can remain recorded as `running`; exactly-once external delivery is not guaranteed.
+
+## Adding a command
+
+Register production commands during `createController` setup, after legacy command registration, using the shared engine:
+
+```js
+engine.register({
+  name: "notice",
+  aliases: ["announce"],
+  description: "Post an informational group notice",
+  requiredRole: "moderator",
+  needsBotAdmin: false,
+  destructive: false,
+  automationSafe: true,
+  effect: true,
+  args: { raw: "string" },
+  parseArgs: args => typeof args === "string" ? { raw: args } : args,
+  async run(ctx) {
+    if (!ctx.args.raw) throw new Error("A notice is required");
+    await ctx.chat.sendMessage(ctx.args.raw);
+  }
+});
+```
+
+Context contains `groupId`, `actor` (`user`, `system`, or `rule` plus ID), `target`, parsed `args`, `reply`, `client`, `storage`, `dryRun`, and resolved `chat`. `effect: true` is required for operational side effects so dry-run and approvals intercept them. Mark destructive operations appropriately. Targeted automatic moderation must set `targetSafety: true` and a `resolveTarget(ctx, permissions)` resolver; use the shared target helpers. A `minimumRole` floor protects admin controls from permission overrides. Return `{ undo: { command, target, args }, irreversible }` when applicable.
+
+All entry points call `engine.executeCommand(name, ctx)`. Nested commands call `ctx.executeCommand(name, overrides)` to preserve actor, target group, and chain restrictions. Do not call another command's `run` directly or send a command message from the linked account. The central engine handles authorization, enabled state, rate limits, dry-run, approvals, destructive capacity, bounded execution, audit, and error reporting. Keep argument validation in the parser/run and target/identity resolution in the resolver. Add fake-client tests for permissions and actual side effects when adding an operational command.
+
+## Activity announcements
+
+Admins add activities inside each group. The bot posts that day's agenda automatically at **07:00 Uganda time (Africa/Kampala)** by default. Groups receive announcements only when they have activities scheduled for that day. No activities are preloaded; add your real schedule before expecting announcements.
+
+Every group member can send `.activities` to view today's agenda. Group admins can use these commands (examples only):
+
+```text
+.activity add 2026-10-03 14:00 | Community meeting at the hall
+.activity add friday 16:00 | Weekly group discussion
+.activity add daily 09:00 | Morning check-in
+.activity time 07:30
+.activity timezone Africa/Kampala
+.activity list
+.activity remove ID
+.activity help
+```
+
+Use 24-hour times and dates in `YYYY-MM-DD` format. Recurring activities accept a full weekday name or `daily`. The time after the date/weekday is the activity's starting time; `.activity time` sets when the daily agenda is posted. Each saved activity gets an ID shown in the confirmation and list commands. Activities and announcement times belong to the group where the admin enters them. The bot does not need admin privileges to manage the activity schedule, but it must be permitted to send messages to that group.
+
+Schedules and daily delivery records are saved in the session volume. The scheduler checks every minute once WhatsApp is ready. If the bot starts after the configured announcement time, it sends today's agenda when activities exist; it does not send agendas for missed previous days. Normal restarts preserve the daily delivery record and avoid resending the same agenda. A crash between sending and saving the record can cause a duplicate on restart. A new activity added after that day's agenda has already been posted appears in `.activities`; it does not trigger a second automatic agenda.
+
+Removing all activities for a day stops that day's announcement. An admin can change each group's announcement time or timezone independently. Keep the session volume persistent to retain the schedule.
+
+## WhatsApp limitations
+
+- Local mutes rely on revoking each future message while the bot is active and permitted to delete. They do not prevent the member from sending, and panic, approvals, the cap, or dry-run can delay/prevent enforcement.
+- Local bans rely on receiving a rejoin notification and removing the member again. They do not invalidate invite links or block joining at the WhatsApp server.
+- Account creation age is unavailable. The bot does not invent it.
+- Revocation windows, removal restrictions, group posting permissions, identity mapping, and notification delivery are controlled by WhatsApp. Mass deletion uses recently fetched messages rather than complete history.
+- Restarts preserve stored configuration and approvals, but events missed while offline are not replayed. No automatic re-add or deleted-message recovery is implemented.
 
 ## Railway deployment
 
-Deploy this repository/project with Dockerfile detection enabled.
+Deploy using the included Dockerfile. It installs Chromium and uses `npm ci` with the checked-in lockfile. Mount a persistent Railway volume at `/app/data/session`; the Docker image sets `SESSION_PATH` to this location. Use a single running instance for each paired WhatsApp account.
 
-The Dockerfile installs Chromium and its Linux dependencies, including `libglib2.0-0`.
+The included `railway.json` configures Docker deployment, `/live` as the deployment healthcheck, and up to 10 automatic restarts after process failures. See [Railway's configuration reference](https://docs.railway.com/config-as-code/reference).
 
-Use a persistent Railway volume mounted at:
+| Endpoint | Meaning |
+| --- | --- |
+| `/live` | HTTP 200 while the service runs; permits the initial QR pairing step |
+| `/health` | HTTP 200 with `ok: true, ready: true` only when WhatsApp is connected; otherwise HTTP 503 |
+| `/` | Basic service response; does not indicate WhatsApp readiness |
 
-`/app/data/session`
+Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
 
-No old WhatsApp session should be copied into the project for the first test.
+## Verification
 
-## Features
+`npm test` uses fake clients to exercise the shared command pipeline from chat, DM, schedule and rule; roles and phone/LID identities; moderation; welcomes; activities; approvals and restart recovery; conditions and rule chains; panic; dry-run; caps; macros; FAQ; reversible actions; browser revocation; HTTP readiness; and failure shutdown without contacting WhatsApp.
 
-- WhatsApp Web authentication
-- Persistent LocalAuth session
-- Railway health endpoint
-- Group anti-link detection
-- Link deletion when the bot is a group administrator
-- Warning after detection
-- `.d` for deleting a quoted message
-- `.r` for removing a quoted member
-- `.ping` health test
+For a live test after pairing, use another account:
 
-## First test
+1. Send `.ping` and confirm `pong`.
+2. Use a test non-admin member: send four link-containing messages, including `https://example.com` and `(example.com)`. Confirm deletion and targeted warnings for the first three, then removal on the fourth. An existing offender already at four or more link offences is removed on their next link.
+3. Have an admin send a link; confirm it remains.
+4. Send `Please read report.pdf`; confirm it remains.
+5. Reply to a recent message with `.d`; confirm it disappears for other members too.
+6. Reply to a test member's message with `.r`; confirm removal.
+7. Remove the bot's admin role, try `.d`, and confirm the command reports missing permissions without local deletion.
+8. Add a test member and confirm the bot welcomes and mentions them.
+9. Add a real activity for today, set the announcement time to the next minute, and confirm the agenda is sent once. Use `.activities` to verify its contents.
+10. Restart the bot with the same persistent volume and confirm activities remain saved and the same day's delivered agenda is not resent.
+11. DM `.groups` / `.use GROUP_ID` as an admin, then run `.status`. Demote that admin and confirm further DM commands are denied. Try a group they do not administer.
+12. Delegate a test moderator with `.mod add USER`: confirm warn/delete/mute work and configuration/removal are denied by default. Confirm protected members' links are exempt from automatic moderation.
+13. Use `.set dryrun on`, test a warning/removal rule, and confirm no warning-count or membership changes. Check `.audit`, then turn dry-run off.
+14. Enable destructive approval, generate a proposal, restart with the same volume, and approve it once. Test rejection, expiry, and a target promoted to admin before approval.
+15. In a disposable group, test joins, departures, admin changes, bot promotion, media captions, scheduled rules, and warning escalation. Use `.rule test ID` to confirm simulation. Ensure `.panic` stops all automated paths and `.resume` restores them.
+16. Set a small cap in the test group and confirm excess automated deletion/removal pauses automation and alerts admins. Restore the cap and resume.
+17. Test local mute/unmute, local ban/unban on rejoining, and lock/unlock. Use `.audit` IDs with `.undo` and confirm reversible state changes and clear replies for irreversible operations.
+18. Export/import settings, use a macro from accounts with different permissions, and confirm FAQ replies. Verify warnings, delegation, rules, and proposals remain after restart.
 
-Make the bot a group administrator, then send:
+The revocation adapter intentionally avoids the library's local-delete fallback and uses WhatsApp Web's internal revocation action. The WhatsApp library is pinned; recheck this adapter against the official [Message source](https://docs.wwebjs.dev/structures_Message.js.html) before upgrading. Live pairing and moderation must still be verified against WhatsApp.
 
-`hello`
+## Dependency audit
 
-`https://example.com`
-
-Reply to a message with:
-
-`.d`
-
-Reply to a member message with:
-
-`.r`
-
-The bot deliberately avoids calling `client.getChatById()` globally before message processing.
+The current lockfile reports nine high-severity audit findings in the browser dependency chain, including `basic-ftp` and `extract-zip`. The installed WhatsApp library pins its Puppeteer version. The automatic audit fix proposes downgrading WhatsApp Web and other packages, so it has not been applied. Review a supported browser dependency update separately and recheck the revocation adapter before changing the pinned library. Browser downloads are disabled during installation; Chromium is supplied by the operating system.
