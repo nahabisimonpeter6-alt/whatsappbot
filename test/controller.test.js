@@ -368,6 +368,33 @@ test("the activity scheduler sends once, respects panic and records the system a
   assert.ok(f.storage.get("1000@g.us").audit.some(row => row.command === "agenda" && row.actor.type === "system"));
 });
 
+test("different current admins manage games and new members receive their updated schedule", async t => {
+  const f = setup(t);
+  f.chat.participants.push({ id: { _serialized: "500@c.us" }, isAdmin: true });
+  await command(f, ".activity add today 20:00 | Truth or Dare", "200@c.us");
+  await command(f, ".activity add tomorrow 19:00 | Sticker battle", "500@c.us");
+  const id = f.storage.get("1000@g.us").activities[0].id;
+  await command(f, `.activity edit ${id} today 21:00 | Truth or Dare — hosted by another admin`, "500@c.us");
+  assert.equal(f.storage.get("1000@g.us").activities.length, 2);
+  await command(f, ".activity add daily 10:00 | Unauthorized", "300@lid");
+  await command(f, `.activity edit ${id} daily 10:00 | Unauthorized`, "300@lid");
+  assert.equal(f.storage.get("1000@g.us").activities.length, 2);
+  assert.equal(f.storage.get("1000@g.us").activities[0].time, "21:00");
+  await command(f, ".activities week", "300@lid");
+  assert.match(f.sent.at(-1).text, /Sticker battle/);
+  await start(f);
+  await f.controller.notification("member_joined", f.notification("400@c.us"));
+  const welcome = f.sent.find(row => row.text.startsWith("👋"));
+  assert.match(welcome.text, /21:00 — Truth or Dare/);
+  assert.match(welcome.text, /2026-10-03 19:00 — Sticker battle/);
+  assert.match(welcome.text, /Group rules/);
+  assert.deepEqual(welcome.options.mentions, ["400@c.us"]);
+  assert.match(f.sent.find(row => row.text.startsWith("📅 Activities for 2026-10-02")).text, /Truth or Dare/);
+  f.chat.participants.find(person => person.id._serialized === "500@c.us").isAdmin = false;
+  await command(f, `.activity remove ${id}`, "500@c.us");
+  assert.equal(f.storage.get("1000@g.us").activities.length, 2);
+});
+
 test("archive cleanup failure does not prevent scheduled rules from running", async t => {
   const f = setup(t);
   await addRule(f, 'WHEN schedule("07:00") THEN ping');

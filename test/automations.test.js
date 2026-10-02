@@ -39,6 +39,29 @@ test("welcomes every newly added member and mentions their phone or LID", async 
   assert.match(f.sent[0].text, /\.activities/);
 });
 
+test("welcome includes today's games, upcoming events and rules from the current group only", async t => {
+  const f = fixture(t);
+  await f.command(".activity add today 20:00 | Truth or Dare");
+  await f.command(".activity add tomorrow 19:00 | Sticker battle");
+  f.store.update("2000@g.us", group => group.activities.push({ id: "private", when: "daily", time: "12:00", text: "Other group's event" }));
+  await f.auto.welcome({ chatId: "1000@g.us", id: { _serialized: "games-join" }, recipientIds: ["300@lid"], getChat: async () => f.chat });
+  const welcome = f.sent[0].text;
+  assert.match(welcome, /Group rules/);
+  assert.match(welcome, /Links from non-admins/);
+  assert.match(welcome, /20:00 — Truth or Dare/);
+  assert.match(welcome, /2026-10-03 19:00 — Sticker battle/);
+  assert.doesNotMatch(welcome, /Other group's event/);
+  assert.match(welcome, /\.activities week/);
+});
+
+test("an empty welcome schedule describes the absence of events without adding sample games", async t => {
+  const f = fixture(t);
+  await f.auto.welcome({ chatId: "1000@g.us", recipientIds: ["300@lid"], getChat: async () => f.chat });
+  assert.match(f.sent[0].text, /No activities are scheduled for today/);
+  assert.match(f.sent[0].text, /No upcoming activities are scheduled yet/);
+  assert.equal(f.store.get("1000@g.us").activities.length, 0);
+});
+
 test("duplicate join notifications do not send duplicate welcomes", async t => {
   const f = fixture(t);
   const event = { chatId: "1000@g.us", id: { _serialized: "join" }, recipientIds: ["300@lid"], getChat: async () => f.chat };
@@ -73,6 +96,30 @@ test("admins add dated and weekly activities with persistent IDs", async t => {
   assert.match(f.replies[0], /Activity saved/);
 });
 
+test("today and tomorrow resolve using the group calendar across a year boundary", async t => {
+  const f = fixture(t); f.setTime("2026-12-31T20:30:00Z");
+  await f.command(".activity add today 23:45 | Countdown");
+  await f.command(".activity add tomorrow 09:00 | New year quiz");
+  assert.deepEqual(f.store.get("1000@g.us").activities.map(a => a.when), ["2026-12-31", "2027-01-01"]);
+  f.setTime("2026-12-31T21:30:00Z");
+  await f.command(".activity add today 10:00 | Morning games");
+  assert.equal(f.store.get("1000@g.us").activities.at(-1).when, "2027-01-01");
+});
+
+test("admins edit an activity without changing its ID and invalid edits leave it unchanged", async t => {
+  const f = fixture(t);
+  await f.command(".activity add friday 20:00 | Truth or Dare");
+  const id = f.store.get("1000@g.us").activities[0].id;
+  await f.command(`.activity edit ${id} saturday 19:30 | Sticker battle`);
+  const edited = f.store.get("1000@g.us").activities[0];
+  assert.deepEqual(edited, { id, when: "saturday", time: "19:30", text: "Sticker battle" });
+  for (const input of [`${id} today 25:00 | Invalid`, `missing today 19:00 | Unknown`, `${id} 2026-10-01 19:00 | Past`]) {
+    await f.command(`.activity edit ${input}`);
+    assert.match(f.replies.at(-1), /❌/);
+    assert.deepEqual(f.store.get("1000@g.us").activities, [edited]);
+  }
+});
+
 test("non-admins cannot add or change activities", async t => {
   const f = fixture(t);
   const auto = createAutomations({ ...f.options, isAdmin: async () => false });
@@ -94,6 +141,38 @@ test("all members can view today's agenda in time order", async t => {
   assert.match(agenda, /2026-10-02 \(Africa\/Kampala\)/);
   assert.ok(agenda.indexOf("10:00") < agenda.indexOf("17:00"));
   assert.doesNotMatch(agenda, /Tomorrow's activity/);
+});
+
+test("members can view tomorrow, the week and a chosen date, with recurring events in date order", async t => {
+  const f = fixture(t); f.setTime("2026-12-31T18:00:00Z");
+  await f.command(".activity add friday 20:00 | Truth or Dare");
+  await f.command(".activity add 2027-01-02 19:00 | Sticker battle");
+  await f.command(".activity add 2027-01-07 19:00 | Beyond this week");
+  await f.command(".activities tomorrow");
+  assert.match(f.replies.at(-1), /2027-01-01/);
+  assert.match(f.replies.at(-1), /Truth or Dare/);
+  assert.doesNotMatch(f.replies.at(-1), /Sticker battle/);
+  await f.command(".activities week");
+  const week = f.replies.at(-1);
+  assert.ok(week.indexOf("2027-01-01 20:00") < week.indexOf("2027-01-02 19:00"));
+  assert.doesNotMatch(week, /Beyond this week/);
+  await f.command(".activities 2027-01-02");
+  assert.match(f.replies.at(-1), /Sticker battle/);
+  await f.command(".activities 2027-02-30");
+  assert.match(f.replies.at(-1), /Use \.activities/);
+});
+
+test("large activity previews are bounded and retain commands to see the full schedule", async t => {
+  const f = fixture(t);
+  f.store.update("1000@g.us", group => {
+    group.activities = Array.from({ length: 6 }, (_, i) => ({ id: String(i), when: "daily", time: `1${i}:00`, text: `Game ${i}` }));
+  });
+  await f.auto.welcome({ chatId: "1000@g.us", recipientIds: ["300@lid"], getChat: async () => f.chat });
+  assert.equal((f.sent[0].text.match(/• .*Game/g) || []).length, 10);
+  assert.match(f.sent[0].text, /\.activities for the full list/);
+  await f.command(".activities week");
+  assert.equal((f.replies.at(-1).match(/• .*Game/g) || []).length, 20);
+  assert.match(f.replies.at(-1), /22 more/);
 });
 
 test("activity list and remove manage only the current group", async t => {

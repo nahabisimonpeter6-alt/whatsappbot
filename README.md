@@ -30,7 +30,7 @@ For example, use `PREFIX='!' npm start` to change commands to `!d`, `!r`, and `!
 
 - Group members' web links are deleted for everyone when WhatsApp permits revocation and the bot is a group admin.
 - Group admins can post links. Owners, delegated moderators, whitelisted members, and the bot are also protected from automated moderation. Identity checks resolve phone-number IDs and WhatsApp LIDs.
-- New members receive a welcome message that mentions them, states the group link rule, and explains how to view today's activities.
+- New members receive a welcome message that mentions them, states the group rules, shows up to five of today's activities and five upcoming activities, and explains how to view the full schedule.
 - After detecting a member's link, the bot mentions that member and posts an incrementing warning. Warnings still work if the bot lacks deletion permission. If identity lookup fails, moderation is skipped and the error is logged rather than risking deletion of an admin's message.
 - Explicit HTTP/HTTPS URLs, `www` domains, and bare domains with recognized public suffixes count as links, including domains enclosed in parentheses. Ordinary filenames such as `report.pdf` and email addresses do not. Text that is also a real domain, such as `notes.md`, is treated as a link.
 - Reply to a message with `.d` to revoke it for everyone. The sender must be an owner, admin, or delegated moderator; the bot must be an admin. Missing permissions or an expired revocation window produce an error; deletion never falls back to the bot's local copy.
@@ -245,12 +245,18 @@ The local archive expires after **24 hours**, retains at most **200 messages per
 
 Admins add activities inside each group. The bot posts that day's agenda automatically at **07:00 Uganda time (Africa/Kampala)** by default. Groups receive announcements only when they have activities scheduled for that day. No activities are preloaded; add your real schedule before expecting announcements.
 
-Every group member can send `.activities` to view today's agenda. Group admins can use these commands (examples only):
+Every group member can send `.activities` for today's agenda, `.activities tomorrow`, `.activities week` for the next seven days including today, or `.activities YYYY-MM-DD` for a particular date. Week previews show up to 20 occurrences; use a date to see that day's full list.
+
+**Any current group admin can add and edit activities**, including events added by another admin. Enter the commands in the group from another account, or select that group through private admin control. Any activity name works: Truth or Dare, sticker battles, quizzes, music nights, birthday celebrations, meetings, and more. These entries supply the welcome previews and daily announcements; members host and play the games at their scheduled times. Examples only:
 
 ```text
 .activity add 2026-10-03 14:00 | Community meeting at the hall
 .activity add friday 16:00 | Weekly group discussion
 .activity add daily 09:00 | Morning check-in
+.activity add today 20:00 | Truth or Dare
+.activity add tomorrow 19:00 | Sticker battle
+.activity add saturday 21:00 | Weekly quiz — hosted by the admins
+.activity edit ID friday 20:30 | Truth or Dare — updated starting time
 .activity time 07:30
 .activity timezone Africa/Kampala
 .activity list
@@ -258,7 +264,7 @@ Every group member can send `.activities` to view today's agenda. Group admins c
 .activity help
 ```
 
-Use 24-hour times and dates in `YYYY-MM-DD` format. Recurring activities accept a full weekday name or `daily`. The time after the date/weekday is the activity's starting time; `.activity time` sets when the daily agenda is posted. Each saved activity gets an ID shown in the confirmation and list commands. Activities and announcement times belong to the group where the admin enters them. The bot does not need admin privileges to manage the activity schedule, but it must be permitted to send messages to that group.
+Use 24-hour times and dates in `YYYY-MM-DD` format. `today` and `tomorrow` are saved as actual dates using the group's timezone. Recurring activities accept a full weekday name or `daily`. The time after the date/weekday is the activity's starting time; `.activity time` sets when the daily agenda is posted. Each saved activity gets an ID shown in the confirmation and list commands. Replace `ID` with that saved ID to edit or remove an activity. Edits preserve the ID. Activities and announcement times belong to the group where the admin enters them. The bot does not need admin privileges to manage the activity schedule, but it must be permitted to send messages to that group.
 
 Schedules and daily delivery records are saved in the session volume. The scheduler checks every minute once WhatsApp is ready. If the bot starts after the configured announcement time, it sends today's agenda when activities exist; it does not send agendas for missed previous days. Normal restarts preserve the daily delivery record and avoid resending the same agenda. A crash between sending and saving the record can cause a duplicate on restart. A new activity added after that day's agenda has already been posted appears in `.activities`; it does not trigger a second automatic agenda.
 

@@ -3,7 +3,7 @@ const { installCoreCommands, raw } = require("./core-commands");
 const { installControlPanel, invocation } = require("./control-panel");
 const { installAuditCommands } = require("./audit-commands");
 const { createModeration } = require("./moderation");
-const { createAutomations, agenda, localClock } = require("./automations");
+const { createAutomations, agenda, selectedAgenda, localClock } = require("./automations");
 const { createRulesEngine } = require("./rules");
 const { publicError } = require("./permissions");
 const { createMessageArchive, unavailableViewOnce } = require("./message-archive");
@@ -76,7 +76,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
       const scheduled = ctx.actor.type !== "user" && ctx.args.date;
       if (scheduled && ctx.args.date !== clock.date) throw publicError("That agenda date has passed. The old proposal will not send a different day's agenda.");
       if (scheduled && (group.lastAnnouncementDate === clock.date || delivered.get(ctx.groupId) === clock.date)) return { alreadySent: true };
-      await ctx.reply(agenda(group, clock));
+      await ctx.reply(scheduled ? agenda(group, clock) : selectedAgenda(group, clock, ctx.args.raw, prefix));
       if (scheduled) {
         delivered.set(ctx.groupId, clock.date);
         storage.update(ctx.groupId, current => { current.lastAnnouncementDate = clock.date; });

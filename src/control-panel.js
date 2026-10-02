@@ -59,7 +59,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
       `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Available copies are reposted as normal media. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
       `Automatic recovery: on by default. Admins: ${prefix}set repostdeleted on|off, ${prefix}set repostviewonce on|off. Rejoined members start link warnings from zero.`,
-      `Activities: ${prefix}activity help`,
+      `Activities: ${prefix}activities week. Any group admin can add games or events: ${prefix}activity add friday 20:00 | Truth or Dare. More: ${prefix}activity help`,
       `Automation: ${prefix}rule list, ${prefix}set approval off|destructive|all, ${prefix}panic, ${prefix}resume, ${prefix}audit`,
       `Private admin control: ${prefix}groups, then ${prefix}use GROUP_ID`,
       "Commands must come from another account. Give the bot admin privileges to delete group messages."

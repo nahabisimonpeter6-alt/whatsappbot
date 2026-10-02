@@ -2,7 +2,18 @@ const { randomUUID } = require("node:crypto");
 const { createCommandRegistry } = require("./command-registry");
 const { validTime, validDate, validTimezone, validWhen } = require("./automation-store");
 
-class ActivityInputError extends Error {}
+class ActivityInputError extends Error {
+  constructor(message) { super(message); this.publicMessage = message; }
+}
+
+function shiftClock(clock, days) {
+  // Advance the group's calendar date rather than adding 24 hours in a timezone
+  // that might cross a daylight-saving boundary.
+  const date = new Date(`${clock.date}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return { ...clock, date: date.toISOString().slice(0, 10),
+    weekday: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][date.getUTCDay()] };
+}
 
 function localClock(now, timezone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
@@ -26,6 +37,34 @@ function agenda(group, clock) {
   const activities = todaysActivities(group, clock);
   const heading = `📅 Activities for ${clock.date} (${group.timezone})`;
   return `${heading}\n\n${activities.length ? activities.map(a => `• ${a.time} — ${a.text}`).join("\n") : "No activities are scheduled for today."}`;
+}
+
+function upcomingActivities(group, clock, startDay = 0, days = 7) {
+  const rows = [];
+  for (let offset = startDay; offset < startDay + days; offset++) {
+    const day = shiftClock(clock, offset);
+    for (const activity of todaysActivities(group, day)) rows.push({ ...activity, date: day.date });
+  }
+  return rows;
+}
+
+function selectedAgenda(group, clock, selection = "", prefix = ".") {
+  const choice = String(selection || "").trim().toLowerCase();
+  if (!choice || choice === "today") return agenda(group, clock);
+  if (choice === "tomorrow") return agenda(group, shiftClock(clock, 1));
+  if (validDate(choice)) return agenda(group, shiftClock({ ...clock, date: choice }, 0));
+  if (choice !== "week") throw new ActivityInputError(`Use ${prefix}activities, ${prefix}activities tomorrow, ${prefix}activities week, or ${prefix}activities YYYY-MM-DD.`);
+  const rows = upcomingActivities(group, clock);
+  return `📅 Activities for the next 7 days (${group.timezone})\n\n${rows.length
+    ? rows.slice(0, 20).map(a => `• ${a.date} ${a.time} — ${a.text}`).join("\n")
+    : "No activities are scheduled for the next 7 days."}${rows.length > 20 ? `\n${rows.length - 20} more. Send ${prefix}activities YYYY-MM-DD to see a full day's agenda.` : ""}`;
+}
+
+function welcomeAgenda(group, clock, prefix) {
+  const today = todaysActivities(group, clock);
+  const upcoming = upcomingActivities(group, clock, 1, 6);
+  const format = (rows, dated) => rows.slice(0, 5).map(a => `• ${dated ? `${a.date} ` : ""}${a.time} — ${a.text}`).join("\n");
+  return `📅 Today's activities (${clock.date}, ${group.timezone})\n${today.length ? format(today, false) : "No activities are scheduled for today."}${today.length > 5 ? `\nSend ${prefix}activities for the full list.` : ""}\n\n📌 Coming up in the next 6 days\n${upcoming.length ? format(upcoming, true) : "No upcoming activities are scheduled yet."}\nSend ${prefix}activities week to see the week's schedule.`;
 }
 
 function createAutomations({ client, store, isAdmin, prefix = ".", logger = console, now = () => new Date(), intervalMs = 60000, registry }) {
@@ -53,8 +92,9 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
       const chat = await notification.getChat();
       if (!chat?.isGroup) return;
       const names = recipients.map(id => `@${id.split("@")[0]}`).join(", ");
+      const group = store.get(notification.chatId);
       await chat.sendMessage(
-        `👋 Welcome ${names} to ${chat.name || "the group"}!\n\nPlease be respectful. Links from non-admins are removed and receive warnings.\nSend ${prefix}activities to see today's activities.`,
+        `👋 Welcome ${names} to ${chat.name || "the group"}!\n\nGroup rules:\n• Be respectful; avoid insults and spam.\n• Follow the group admins' instructions.\n• Links from non-admins are removed and receive warnings.\n\n${welcomeAgenda(group, localClock(now(), group.timezone), prefix)}\nAny group admin can add events with ${prefix}activity help.`,
         { mentions: recipients }
       );
     } catch (error) {
@@ -69,23 +109,28 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
     return [
       "📅 Activity commands (admins manage the schedule):",
       `${prefix}activities — today's agenda`,
+      `${prefix}activities tomorrow / week / YYYY-MM-DD — other upcoming activities`,
+      `${prefix}activity add today 20:00 | Truth or Dare`,
+      `${prefix}activity add tomorrow 19:00 | Sticker battle`,
       `${prefix}activity add YYYY-MM-DD HH:MM | Activity description`,
       `${prefix}activity add monday HH:MM | Weekly activity (use any weekday)`,
       `${prefix}activity add daily HH:MM | Daily activity`,
       `${prefix}activity list`,
+      `${prefix}activity edit ID friday 20:00 | Updated activity description`,
       `${prefix}activity remove ID`,
       `${prefix}activity time HH:MM — daily announcement time`,
       `${prefix}activity timezone Africa/Kampala`,
-      "Default announcements: 07:00, Uganda time. Only groups with scheduled activities receive them."
+      "Any current group admin can add or edit any named activity. Games, quizzes, music nights and meetings all use the same schedule.",
+      "New members see the rules, today's activities and an upcoming preview. Default announcements: 07:00, Uganda time. Only groups with scheduled activities receive them."
     ].join("\n");
   }
 
   async function runActivityCommand(message) {
     if (message?.fromMe || !message?.from?.endsWith("@g.us")) return false;
     const text = String(message.body || "").trim();
-    if (text === `${prefix}activities`) {
+    if (text === `${prefix}activities` || text.startsWith(`${prefix}activities `)) {
       const group = store.get(message.from);
-      await message.reply(agenda(group, localClock(now(), group.timezone)));
+      await message.reply(selectedAgenda(group, localClock(now(), group.timezone), text.slice(`${prefix}activities`.length), prefix));
       return true;
     }
     const command = `${prefix}activity`;
@@ -103,21 +148,32 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
         const group = store.get(message.from);
         const rows = group.activities.map(a => `${a.id}: ${a.when} ${a.time} — ${a.text}`);
         await message.reply(`📅 Saved activities\nAnnouncement: ${group.announceAt} (${group.timezone})\n\n${rows.join("\n") || "No activities saved."}`);
-      } else if (args.startsWith("add ")) {
-        const match = /^add\s+(\S+)\s+(\S+)\s*\|\s*([\s\S]+)$/.exec(args);
-        if (!match) throw new ActivityInputError(`Use ${prefix}activity add YYYY-MM-DD HH:MM | Activity description.`);
-        const when = match[1].toLowerCase(), time = match[2], description = match[3].trim();
-        if (!validWhen(when)) throw new ActivityInputError("Use a real date (YYYY-MM-DD), a full weekday name, or daily.");
+      } else if (args.startsWith("add ") || args.startsWith("edit ")) {
+        const editing = args.startsWith("edit ");
+        const match = /^(?:add|edit)\s+(?:(\S+)\s+)?(\S+)\s+(\S+)\s*\|\s*([\s\S]+)$/.exec(args);
+        if (!match || editing !== !!match[1]) throw new ActivityInputError(`Use ${prefix}activity ${editing ? "edit ID" : "add"} today HH:MM | Activity description.`);
+        const group = store.get(message.from);
+        const clock = localClock(now(), group.timezone);
+        const requestedWhen = match[2].toLowerCase();
+        const when = requestedWhen === "today" ? clock.date : requestedWhen === "tomorrow" ? shiftClock(clock, 1).date : requestedWhen;
+        const time = match[3], description = match[4].trim();
+        if (!validWhen(when)) throw new ActivityInputError("Use today, tomorrow, a real date (YYYY-MM-DD), a full weekday name, or daily.");
         if (!validTime(time)) throw new ActivityInputError("Use a 24-hour time, for example 14:30.");
         if (!description || description.length > 500) throw new ActivityInputError("Activity descriptions must contain 1–500 characters.");
-        const group = store.get(message.from);
-        if (validDate(when) && when < localClock(now(), group.timezone).date) throw new ActivityInputError("That date has already passed.");
-        const id = randomUUID().slice(0, 8);
+        if (validDate(when) && when < clock.date) throw new ActivityInputError("That date has already passed.");
+        const id = editing ? match[1] : randomUUID().slice(0, 8);
         store.update(message.from, group => {
-          if (group.activities.length >= 50) throw new ActivityInputError("Remove an old activity before adding more (maximum 50).");
-          group.activities.push({ id, when, time, text: description });
+          const activity = { id, when, time, text: description };
+          if (editing) {
+            const index = group.activities.findIndex(a => a.id === id);
+            if (index < 0) throw new ActivityInputError("That activity ID was not found. Use the activity list command.");
+            group.activities[index] = activity;
+          } else {
+            if (group.activities.length >= 50) throw new ActivityInputError("Remove an old activity before adding more (maximum 50).");
+            group.activities.push(activity);
+          }
         });
-        await message.reply(`✅ Activity saved (${id}): ${when} ${time} — ${description}\nDaily announcement: ${group.announceAt} (${group.timezone}).`);
+        await message.reply(`✅ Activity ${editing ? "updated" : "saved"} (${id}): ${when} ${time} — ${description}\nDaily announcement: ${group.announceAt} (${group.timezone}).`);
       } else if (args.startsWith("remove ")) {
         const id = args.slice(7).trim();
         store.update(message.from, group => {
@@ -181,9 +237,9 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
   }
 
   commands.register({ name: "welcome", description: "Welcome new group members", requiredRole: "member", automationSafe: true, effect: true, args: {}, run: ctx => runWelcome(ctx.notification, ctx.enforcePolicy) });
-  commands.register({ name: "agenda", aliases: ["activities"], description: "Show today's activities", automationSafe: true, effect: true, args: {}, run: ctx => {
+  commands.register({ name: "agenda", aliases: ["activities"], description: "Show today's or upcoming activities", automationSafe: true, effect: true, args: { raw: "string" }, parseArgs: args => typeof args === "string" ? { raw: args } : args || {}, run: ctx => {
     const group = store.get(ctx.groupId);
-    return ctx.reply(agenda(group, localClock(now(), group.timezone)));
+    return ctx.reply(selectedAgenda(group, localClock(now(), group.timezone), ctx.args.raw, prefix));
   } });
   commands.register({ name: "activity", description: "Manage group activities", requiredRole: "admin", args: {}, run: ctx => runActivityCommand(ctx.message) });
 
@@ -194,8 +250,8 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
   async function handleCommand(message) {
     if (message?.fromMe || !message?.from?.endsWith("@g.us")) return false;
     const text = String(message.body || "").trim();
-    if (text === `${prefix}activities`) {
-      await commands.executeCommand("agenda", { groupId: message.from, actor: { type: "user", id: message.author || message.from }, args: {}, message, client, storage: store, reply: text => message.reply(text) });
+    if (text === `${prefix}activities` || text.startsWith(`${prefix}activities `)) {
+      await commands.executeCommand("agenda", { groupId: message.from, actor: { type: "user", id: message.author || message.from }, args: { raw: text.slice(`${prefix}activities`.length).trim() }, message, client, storage: store, reply: text => message.reply(text) });
       return true;
     }
     if (text !== `${prefix}activity` && !text.startsWith(`${prefix}activity `)) return false;
@@ -220,4 +276,4 @@ function createAutomations({ client, store, isAdmin, prefix = ".", logger = cons
   return { welcome, handleCommand, start, stop, tick };
 }
 
-module.exports = { createAutomations, localClock, todaysActivities, agenda };
+module.exports = { createAutomations, localClock, todaysActivities, agenda, selectedAgenda };
