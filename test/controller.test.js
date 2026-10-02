@@ -122,7 +122,7 @@ test("rapid posts finish removal before processing messages from a departed memb
   };
   await Promise.all(Array.from({ length: 5 }, () => command(f, "example.com", "300@lid")));
   assert.equal(f.actions.filter(row => row.type === "remove").length, 1);
-  assert.equal(f.storage.get("1000@g.us").linkWarnings["300@lid"], 4);
+  assert.equal(f.storage.get("1000@g.us").linkWarnings["300@lid"], 0);
 });
 
 test("the fourth link still warns when bot privileges prevent removal", async t => {
@@ -173,7 +173,7 @@ test("three saved link offences survive restart and the next link removes the me
   const restarted = setup(t, createAutomationStore(file));
   await command(restarted, "example.com", "300@c.us");
   assert.equal(restarted.actions.filter(row => row.type === "remove").length, 1);
-  assert.equal(restarted.storage.get("1000@g.us").linkWarnings["300@lid"], 4);
+  assert.equal(restarted.storage.get("1000@g.us").linkWarnings["300@lid"], 0);
   await command(restarted, ".rule remove builtin-link-removal");
   const disabled = createAutomationStore(file);
   assert.equal(disabled.get("1000@g.us").rules.some(rule => rule.id === "builtin-link-removal"), false);

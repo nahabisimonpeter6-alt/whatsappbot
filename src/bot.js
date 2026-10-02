@@ -5,6 +5,7 @@ const { createController } = require("./controller");
 const { createAutomationStore } = require("./automation-store");
 const { createMessageArchive } = require("./message-archive");
 const { recoverMissedAuthSync } = require("./whatsapp-compat");
+const { downloadAvailableMedia } = require("./media");
 
 function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
   const app = express();
@@ -102,7 +103,6 @@ function startBot() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be between 1 and 65535.");
   const sessionPath = process.env.SESSION_PATH || path.join(__dirname, "..", "data", "session");
   const automationStore = createAutomationStore(process.env.AUTOMATION_STATE_PATH || path.join(sessionPath, "automations.json"));
-  const archive = createMessageArchive(process.env.MESSAGE_ARCHIVE_PATH || path.join(sessionPath, "message-archive.json"));
   const client = new Client({
     authStrategy: new LocalAuth({
       dataPath: sessionPath
@@ -112,6 +112,9 @@ function startBot() {
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     }
+  });
+  const archive = createMessageArchive(process.env.MESSAGE_ARCHIVE_PATH || path.join(sessionPath, "message-archive.json"), {
+    downloadMedia: (message, limit) => downloadAvailableMedia(client, message, limit)
   });
   const runtime = createRuntime({ client, port, prefix: process.env.PREFIX || ".", automationStore, archive });
   process.once("SIGTERM", () => void runtime.stop(0));

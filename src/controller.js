@@ -9,18 +9,26 @@ const { publicError } = require("./permissions");
 const { createMessageArchive } = require("./message-archive");
 const { installRecoveryCommands } = require("./recovery-commands");
 const { revokeForEveryone } = require("./revoke");
+const { installAutoRecovery } = require("./auto-recovery");
+const { resetLinkCycle } = require("./warning-cycle");
 
 function createController({ client, storage, prefix = ".", logger = console, now = () => new Date(), ownerNumbers, revoke,
   archive = createMessageArchive(undefined, { now, logger }), makeMedia }) {
   function capture(message) {
-    try { archive.observe(message); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
+    try { return archive.observe(message); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
   }
   function handleRevocation(message, original) {
-    try { archive.revoked(message, original); } catch (error) { logger.error("[ARCHIVE] deletion capture failed:", error); }
+    try {
+      const id = archive.revoked(message, original), groupId = original?.from || message?.from;
+      if (id) recovery.schedule(groupId, id, "deleted");
+    } catch (error) { logger.error("[ARCHIVE] deletion capture failed:", error); }
   }
   const options = { client, storage, prefix, logger, now, ownerNumbers, archive, makeMedia,
     revoke: async (sender, message) => {
       capture(message);
+      // Mark before revocation: WhatsApp can emit its deletion event before
+      // the revoke call returns. Recovery must not undo moderation.
+      recovery.suppress(message);
       await (revoke || revokeForEveryone)(sender, message);
       handleRevocation(message, message);
     }
@@ -30,6 +38,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   let active = false, timer, ruleTicking = false;
   const delivered = new Map();
   const messages = new Map();
+  const seenJoins = new Set();
 
   async function route(message) {
     const text = String(message.body || "").trim();
@@ -78,6 +87,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   panel = installControlPanel(engine, options);
   installAuditCommands(engine, options, core);
   installRecoveryCommands(engine, options);
+  const recovery = installAutoRecovery(engine, { ...options, isActive: () => active });
   rules = createRulesEngine(engine, options);
   for (const [, group] of storage.entries()) rules.validateRules(group.rules);
   engine.afterRun = async (_entry, ctx, outcome) => {
@@ -95,20 +105,22 @@ function createController({ client, storage, prefix = ".", logger = console, now
 
   function handleMessage(message) {
     if (message?.fromMe) return Promise.resolve();
-    capture(message);
+    const archivedId = capture(message);
     const groupId = message?.from;
     const command = invocation(String(message?.body || ""), prefix)?.name;
     if (!groupId?.endsWith("@g.us") || engine.get(command)?.urgent) return processMessage(message);
     // Keep rapid posts in order: a removal finishes before resolving the next
     // message's membership, while panic/resume can still interrupt the queue.
     const previous = messages.get(groupId) || Promise.resolve();
-    const running = previous.catch(() => {}).then(() => processMessage(message));
+    const running = previous.catch(() => {}).then(() => processMessage(message)).then(() => {
+      recovery.schedule(groupId, archivedId, "viewonce");
+    });
     messages.set(groupId, running);
     void running.finally(() => { if (messages.get(groupId) === running) messages.delete(groupId); }).catch(() => {});
     return running;
   }
 
-  async function notification(trigger, notification) {
+  async function processNotification(trigger, notification) {
     try {
       if (!active || !notification.chatId?.endsWith("@g.us")) return;
       const chat = await notification.getChat();
@@ -121,6 +133,13 @@ function createController({ client, storage, prefix = ".", logger = console, now
         const botId = client.info?.wid?._serialized;
         if (trigger === "member_joined" && botId && (await engine.permissions.identities(botId)).has(target)) continue;
         const key = notification.id?._serialized;
+        if (trigger === "member_joined") {
+          const joinKey = `${notification.chatId}:${key || notification.id?.$1 || Math.floor(now().valueOf() / 60000)}:${target}`;
+          if (seenJoins.has(joinKey)) continue;
+          seenJoins.add(joinKey); if (seenJoins.size > 1000) seenJoins.delete(seenJoins.values().next().value);
+          const identities = await engine.permissions.identities(target); identities.add(target);
+          storage.update(notification.chatId, group => resetLinkCycle(group, identities));
+        }
         const single = { chatId: notification.chatId, id: key ? { _serialized: `${key}:${target}` } : {}, recipientIds: [target], getChat: async () => chat };
         const event = { groupId: notification.chatId, chat, target, notification: single, trigger };
         if (trigger === "member_joined") await rules.memberJoined(event); else await rules.emit(event);
@@ -130,6 +149,15 @@ function createController({ client, storage, prefix = ".", logger = console, now
         }
       }
     } catch (error) { logger.error(`[CONTROL] ${trigger} failed:`, error); }
+  }
+
+  function notification(trigger, event) {
+    const groupId = event.chatId;
+    const previous = messages.get(groupId) || Promise.resolve();
+    const running = previous.catch(() => {}).then(() => processNotification(trigger, event));
+    messages.set(groupId, running);
+    void running.finally(() => { if (messages.get(groupId) === running) messages.delete(groupId); }).catch(() => {});
+    return running;
   }
 
   async function ruleTick() {
@@ -148,7 +176,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   }
   function stop() { active = false; automations.stop(); clearInterval(timer); }
   async function tick() { if (!active) return; await automations.tick(); await ruleTick(); }
-  return { engine, panel, rules, archive, handleMessage, handleRevocation, notification, start, stop, tick };
+  return { engine, panel, rules, archive, recovery, handleMessage, handleRevocation, notification, start, stop, tick };
 }
 
 module.exports = { createController };

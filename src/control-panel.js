@@ -24,7 +24,7 @@ function splitCommands(text) {
   return result;
 }
 
-const SETTINGS_KEYS = ["timezone", "announceAt", "activities", "autopilot", "dryRun", "approval", "proposalExpiryMs", "destructiveCap", "commandRate", "moderators", "whitelist", "permissions", "disabledCommands", "aliases", "macros", "customCommands", "rules", "raidThreshold", "raidWindowMs"];
+const SETTINGS_KEYS = ["timezone", "announceAt", "activities", "autopilot", "dryRun", "approval", "proposalExpiryMs", "destructiveCap", "commandRate", "moderators", "whitelist", "permissions", "disabledCommands", "aliases", "macros", "customCommands", "rules", "raidThreshold", "raidWindowMs", "repostDeleted", "repostViewOnce"];
 function validName(name) { return /^[a-z][a-z0-9_-]{0,31}$/.test(name) && !["constructor", "prototype"].includes(name); }
 
 function installControlPanel(engine, { client, storage, prefix = ".", now = () => new Date() }) {
@@ -58,6 +58,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
       `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Only media WhatsApp made available and the bot saved can be recovered. Archive: 24 hours.`,
+      `Automatic recovery: on by default. Admins: ${prefix}set repostdeleted on|off, ${prefix}set repostviewonce on|off. Rejoined members start link warnings from zero.`,
       `Activities: ${prefix}activity help`,
       `Automation: ${prefix}rule list, ${prefix}set approval off|destructive|all, ${prefix}panic, ${prefix}resume, ${prefix}audit`,
       `Private admin control: ${prefix}groups, then ${prefix}use GROUP_ID`,
@@ -175,16 +176,16 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
     run: async ctx => {
       const [key, ...rest] = (ctx.args.raw || "").trim().split(/\s+/); const value = rest.join(" ");
       storage.update(ctx.groupId, group => {
-        if (["autopilot", "dryrun"].includes(key)) {
+        if (["autopilot", "dryrun", "repostdeleted", "repostviewonce"].includes(key)) {
           if (!["on", "off"].includes(value)) throw publicError("Use on or off.");
-          group[key === "dryrun" ? "dryRun" : key] = value === "on";
+          group[{ dryrun: "dryRun", repostdeleted: "repostDeleted", repostviewonce: "repostViewOnce" }[key] || key] = value === "on";
         } else if (key === "approval") {
           if (!["off", "destructive", "all"].includes(value)) throw publicError("Approval mode: off, destructive, or all.");
           group.approval = value;
         } else if (["cap", "rate", "approvalttl", "raidcount", "raidwindow"].includes(key)) {
           const number = Number(value); if (!Number.isInteger(number) || number < 1 || number > (key === "approvalttl" ? 1440 : 1000)) throw publicError("Enter a valid positive limit.");
           group[{ cap: "destructiveCap", rate: "commandRate", approvalttl: "proposalExpiryMs", raidcount: "raidThreshold", raidwindow: "raidWindowMs" }[key]] = key === "approvalttl" ? number * 60000 : key === "raidwindow" ? number * 1000 : number;
-        } else throw publicError("Settings: autopilot, dryrun, approval, cap, rate, approvalttl, raidcount, raidwindow.");
+        } else throw publicError("Settings: autopilot, dryrun, repostdeleted, repostviewonce, approval, cap, rate, approvalttl, raidcount, raidwindow.");
       });
       await ctx.reply(`✅ ${key} set to ${value}.`);
     }

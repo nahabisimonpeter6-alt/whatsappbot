@@ -8,6 +8,7 @@ const DEFAULT_GROUP = {
   activities: [],
   lastAnnouncementDate: null,
   autopilot: true, paused: false, dryRun: false, approval: "off", proposalExpiryMs: 600000,
+  repostDeleted: true, repostViewOnce: true,
   destructiveCap: 20, commandRate: 30,
   moderators: [], whitelist: [], permissions: {}, disabledCommands: [],
   aliases: {}, macros: {}, customCommands: {}, rules: [
@@ -18,7 +19,7 @@ const DEFAULT_GROUP = {
     { id: "builtin-ban", source: "WHEN member_banned THEN remove @sender", trigger: "member_banned", enabled: true, cooldownMs: 0 },
     { id: "builtin-raid", source: "WHEN raid_detected THEN lock", trigger: "raid_detected", enabled: false, cooldownMs: 60000 }
   ], raidThreshold: 5, raidWindowMs: 60000,
-  warnings: {}, linkWarnings: {}, linkEscalationVersion: 1,
+  warnings: {}, linkWarnings: {}, linkEscalationVersion: 1, warningCycles: {}, linkResetVersion: 1,
   muted: {}, bans: [], proposals: [], audit: [], destructiveActions: [], ruleRuns: {}
 };
 
@@ -71,7 +72,7 @@ function validWhen(value) {
 
 function validateGroup(group) {
   if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Invalid saved group settings.");
-  for (const key of ["autopilot", "paused", "dryRun"]) if (typeof group[key] !== "boolean") throw new Error("Invalid automation switch.");
+  for (const key of ["autopilot", "paused", "dryRun", "repostDeleted", "repostViewOnce"]) if (typeof group[key] !== "boolean") throw new Error("Invalid automation switch.");
   if (!["off", "destructive", "all"].includes(group.approval)) throw new Error("Invalid approval setting.");
   for (const [key, minimum, maximum] of [["proposalExpiryMs", 1000, 86400000], ["destructiveCap", 1, 1000], ["commandRate", 1, 1000], ["raidThreshold", 1, 1000], ["raidWindowMs", 1000, 1000000]]) {
     if (!Number.isInteger(group[key]) || group[key] < minimum || group[key] > maximum) throw new Error("Invalid automation limit.");
@@ -79,7 +80,7 @@ function validateGroup(group) {
   for (const key of ["moderators", "whitelist", "disabledCommands", "bans", "rules", "proposals", "audit", "destructiveActions"]) {
     if (!Array.isArray(group[key]) || group[key].length > 1000) throw new Error("Invalid saved automation list.");
   }
-  for (const key of ["permissions", "aliases", "macros", "customCommands", "warnings", "linkWarnings", "muted", "ruleRuns"]) {
+  for (const key of ["permissions", "aliases", "macros", "customCommands", "warnings", "linkWarnings", "warningCycles", "muted", "ruleRuns"]) {
     if (!group[key] || typeof group[key] !== "object" || Array.isArray(group[key])) throw new Error("Invalid automation mapping.");
   }
   for (const rank of Object.values(group.permissions)) if (!["member", "moderator", "admin", "owner"].includes(rank)) throw new Error("Invalid command role.");
@@ -89,6 +90,7 @@ function validateGroup(group) {
   for (const count of Object.values(group.warnings)) if (!Number.isInteger(count) || count < 0) throw new Error("Invalid warning count.");
   for (const count of Object.values(group.linkWarnings)) if (!Number.isInteger(count) || count < 0) throw new Error("Invalid link warning count.");
   if (group.linkEscalationVersion !== 1) throw new Error("Invalid link escalation version.");
+  if (group.linkResetVersion !== 1 || Object.values(group.warningCycles).some(value => !Number.isInteger(value) || value < 0)) throw new Error("Invalid link warning cycle.");
   if (!group || !validTimezone(group.timezone) || !validTime(group.announceAt) ||
       !Array.isArray(group.activities) || group.activities.length > 50 ||
       (group.lastAnnouncementDate !== null && !validDate(group.lastAnnouncementDate))) {
@@ -116,6 +118,17 @@ function createAutomationStore(filePath) {
       if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Invalid saved group settings.");
       if (!id.endsWith("@g.us")) throw new Error("Invalid saved group ID.");
       state.groups[id] = { ...structuredClone(DEFAULT_GROUP), ...migrateLinkEscalation(group) };
+      if (group.linkResetVersion !== 1) {
+        const removed = new Set();
+        for (const row of group.audit || []) {
+          if (row.result !== "success" || row.dryRun || !row.target) continue;
+          if (row.command === "warn" && (row.args?.linkWarning || row.actor?.id === "builtin-links")) removed.delete(row.target);
+          if (row.command === "remove" && row.actor?.id === "builtin-link-removal") removed.add(row.target);
+        }
+        const { resetLinkCycle } = require("./warning-cycle");
+        resetLinkCycle(state.groups[id], removed);
+        state.groups[id].linkResetVersion = 1;
+      }
       validateGroup(state.groups[id]);
     }
   }

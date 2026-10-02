@@ -1,6 +1,7 @@
 const { revokeForEveryone } = require("./revoke");
 const { publicError, validUser } = require("./permissions");
 const { containsLink } = require("./links");
+const { resetLinkCycle, checkLinkCycle } = require("./warning-cycle");
 const raw = args => typeof args === "string" ? { raw: args } : args || {};
 const senderId = message => message?.author || message?.from;
 
@@ -51,10 +52,16 @@ function installCoreCommands(engine, { client, storage, prefix = ".", revoke = r
     resolveTarget: async (ctx, permissions) => {
       if (!ctx.args.raw && !ctx.args.target && !ctx.target && !ctx.message?.hasQuotedMsg) throw publicError(`Reply to a member's message with ${prefix}r.`);
       await target(ctx, permissions);
+      if (ctx.actor.id === "builtin-link-removal") checkLinkCycle(ctx, storage);
     }, failureMessage: "Could not remove that member.",
     run: async ctx => {
       const result = await ctx.chat.removeParticipants([ctx.target]);
       if (result?.status !== 200) throw new Error(`Removal failed: ${result?.status}`);
+      if (ctx.actor.id === "builtin-link-removal") {
+        const identities = await engine.permissions.identities(ctx.target);
+        identities.add(ctx.target);
+        storage.update(ctx.groupId, group => resetLinkCycle(group, identities));
+      }
       if (ctx.actor.type === "rule" && ctx.actor.id === "builtin-link-removal") {
         try {
           await ctx.chat.sendMessage(`🚫 @${ctx.target.split("@")[0]} was removed for repeatedly posting links.`, { mentions: [ctx.target] });
@@ -67,6 +74,7 @@ function installCoreCommands(engine, { client, storage, prefix = ".", revoke = r
     resolveTarget: async (ctx, permissions) => {
       await target(ctx, permissions);
       if (ctx.actor.type !== "user" && ctx.ruleTrigger === "link_detected" && ctx.target === ctx.event?.target && containsLink(ctx.message?.body)) ctx.args.linkWarning = true;
+      if (ctx.args.linkWarning) checkLinkCycle(ctx, storage);
     },
     run: async ctx => {
       const linkWarning = ctx.args.linkWarning === true;
@@ -77,12 +85,13 @@ function installCoreCommands(engine, { client, storage, prefix = ".", revoke = r
       const count = group.warnings[ctx.target];
       const linkCount = linkWarning ? group.linkWarnings[ctx.target] : null;
       const reason = ctx.args.reason || ctx.args.raw?.trim().split(/\s+/).slice(1).join(" ") || "links are not allowed for non-admins in this group.";
-      await ctx.chat.sendMessage(`⚠️ @${ctx.target.split("@")[0]}, warning ${count}: ${reason}${linkWarning ? `\nLink offences: ${linkCount}.` : ""}`, { mentions: [ctx.target] });
-      return { count, linkCount, event: "warn_count_reached", undo: { command: "unwarn", target: ctx.target, args: { amount: 1, linkWarning } } };
+      await ctx.chat.sendMessage(`⚠️ @${ctx.target.split("@")[0]}, warning ${linkWarning ? linkCount : count}: ${reason}${linkWarning ? `\nLink offences: ${linkCount}.` : ""}`, { mentions: [ctx.target] });
+      return { count, linkCount, event: "warn_count_reached", undo: { command: "unwarn", target: ctx.target, args: { amount: 1, linkWarning, ...(linkWarning ? { warningCycle: ctx.args.warningCycle } : {}) } } };
     }
   });
   register({ name: "unwarn", description: "Remove a warning", requiredRole: "moderator", automationSafe: true, effect: true, targetSafety: true, resolveTarget: target,
     run: async ctx => {
+      if (ctx.args.linkWarning && ctx.args.warningCycle !== undefined) checkLinkCycle(ctx, storage);
       storage.update(ctx.groupId, group => {
         group.warnings[ctx.target] = Math.max(0, (group.warnings[ctx.target] || 0) - (ctx.args.amount || 1));
         if (ctx.args.linkWarning !== false) group.linkWarnings[ctx.target] = Math.max(0, (group.linkWarnings[ctx.target] || 0) - (ctx.args.amount || 1));

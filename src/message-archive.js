@@ -8,7 +8,7 @@ const viewOnce = message => !!(message?.isViewOnce || message?._data?.isViewOnce
 
 function createMessageArchive(filePath, { now = () => new Date(), logger = console,
   retentionMs = 86400000, perGroup = 200, maxBytes = 100 * 1024 * 1024,
-  maxMediaBytes = 5 * 1024 * 1024, downloadTimeoutMs = 10000 } = {}) {
+  maxMediaBytes = 5 * 1024 * 1024, downloadTimeoutMs = 10000, downloadMedia = message => message.downloadMedia?.() } = {}) {
   let state = { version: 1, messages: [] };
   const pending = new Map();
   const downloading = new Set();
@@ -62,7 +62,7 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
     // A timeout ends the caller's wait, but the browser download can still be
     // running. Keep its slot occupied until the underlying request settles.
     downloading.add(id);
-    const request = Promise.resolve().then(() => message.downloadMedia());
+    const request = Promise.resolve().then(() => downloadMedia(message, maxMediaBytes));
     void request.then(() => downloading.delete(id), () => downloading.delete(id));
     const job = (async () => {
       let timer;
@@ -96,7 +96,7 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
     const isViewOnce = viewOnce(message);
     const hasMedia = !!(message.hasMedia || isViewOnce);
     const size = message._data?.size || message._data?.filesize || 0;
-    const downloadable = hasMedia && typeof message.downloadMedia === "function" && size <= maxMediaBytes && downloading.size < 4;
+    const downloadable = hasMedia && size <= maxMediaBytes && downloading.size < 4;
     if (existing) {
       if (existing.media || pending.has(existing.id) || downloading.has(existing.id)) return existing.id;
       update(rows => {
@@ -135,6 +135,14 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
       }
       row.deleted = true;
     });
+    return get(groupId, sourceId)?.id;
+  }
+
+  function patch(groupId, id, edit) {
+    update(rows => { const row = rows.find(row => row.groupId === groupId && (row.id === id || row.sourceId === id)); if (row) edit(row); });
+  }
+  function suppress(message) {
+    patch(message.from, messageId(message), row => { row.moderated = true; });
   }
 
   // Expired data is also removed on startup and during quiet periods.
@@ -142,7 +150,7 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
     for (const row of rows) if (row.mediaStatus === "downloading") row.mediaStatus = "unavailable";
   });
   sweep();
-  return { observe, revoked, list, get, sweep, waitFor: id => pending.get(id) || Promise.resolve() };
+  return { observe, revoked, list, get, sweep, patch, suppress, waitFor: id => pending.get(id) || Promise.resolve() };
 }
 
 module.exports = { createMessageArchive, messageId, viewOnce };

@@ -19,7 +19,8 @@ function compatibleUtils(loadUtils) {
             const lastMessage = lastReceivedKeyId`);
   replace(".Msg.get(chat.lastReceivedKey._serialized)", ".Msg.get(lastReceivedKeyId)");
   replace("chat.lastReceivedKey._serialized,", "lastReceivedKeyId,");
-  replace("delete msg.pendingAckUpdate;", `if (msg.id && msg.id._serialized == null) {
+  replace("delete msg.pendingAckUpdate;", `msg.isViewOnce = Boolean(message.isViewOnce || msg.isViewOnce);
+        if (msg.id && msg.id._serialized == null) {
             const serializedId = window.WWebJS.getMsgKeyId(msg.id);
             if (serializedId) msg.id = { ...msg.id, _serialized: serializedId };
         }

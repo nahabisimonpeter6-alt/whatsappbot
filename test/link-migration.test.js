@@ -60,3 +60,20 @@ test("migration persists once and an intentionally disabled removal rule remains
   assert.equal(restored.rules.filter(rule => rule.id === "builtin-link-removal").length, 1);
   assert.equal(restored.rules.find(rule => rule.id === "builtin-link-removal").enabled, false);
 });
+
+test("old installations reset a completed link removal while retaining unrelated and newer warnings", t => {
+  const { store } = legacyStore(t, group => {
+    delete group.linkResetVersion; delete group.warningCycles;
+    group.warnings = { "300@lid": 5, "400@c.us": 1 };
+    group.audit = [
+      ...Array.from({ length: 4 }, () => ({ command: "warn", target: "300@lid", actor: { id: "builtin-links", type: "rule" }, result: "success" })),
+      { command: "remove", target: "300@lid", actor: { id: "builtin-link-removal", type: "rule" }, result: "success" },
+      { command: "remove", target: "400@c.us", actor: { id: "builtin-link-removal", type: "rule" }, result: "success" },
+      { command: "warn", target: "400@c.us", actor: { id: "builtin-links", type: "rule" }, result: "success" }
+    ];
+  });
+  const group = store.get("1000@g.us");
+  assert.equal(group.linkWarnings["300@lid"], 0);
+  assert.equal(group.warnings["300@lid"], 1);
+  assert.equal(group.linkWarnings["400@c.us"], 1);
+});

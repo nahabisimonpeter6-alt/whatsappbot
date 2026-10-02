@@ -43,6 +43,12 @@ test("incoming message models expose normalized IDs for delete, proposals, and w
   assert.equal(model.id._serialized, "incoming");
 });
 
+test("incoming models retain a view-once flag exposed only on the native model", () => {
+  const f = fixture();
+  const model = f.window.WWebJS.getMessageModel({ isViewOnce: true, serialize: () => ({ id: { $1: "view-once" } }) });
+  assert.equal(model.isViewOnce, true);
+});
+
 test("existing serialized message IDs take precedence over renamed keys", () => {
   const f = fixture();
   assert.equal(f.window.WWebJS.getMsgKeyId({ _serialized: "old", $1: "new" }), "old");
