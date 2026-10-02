@@ -114,6 +114,21 @@ test("the runtime captures deletion events only while ready and retains the orig
   assert.equal(f.runtime.controller.archive.get("1000@g.us", "deleted").deleted, true);
 });
 
+test("runtime routes ciphertext placeholders only while WhatsApp is ready", async t => {
+  const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
+  const received = [];
+  f.runtime.controller.handleUnavailableViewOnce = message => received.push(message);
+  const placeholder = { from: "1000@g.us", type: "ciphertext", _data: { subtype: "view_once_unavailable_fanout" } };
+  f.client.emit("message_ciphertext", placeholder);
+  assert.equal(received.length, 0);
+  f.client.emit("ready");
+  f.client.emit("message_ciphertext", placeholder);
+  assert.deepEqual(received, [placeholder]);
+  await f.runtime.stop();
+  f.client.emit("message_ciphertext", placeholder);
+  assert.equal(received.length, 1);
+});
+
 test("runtime welcomes group joins only after readiness", async t => {
   const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
   f.client.info = { wid: { _serialized: "100@c.us" } };

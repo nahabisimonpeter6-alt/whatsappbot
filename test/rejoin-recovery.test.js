@@ -97,9 +97,86 @@ test("view-once media is automatically redisplayed as ordinary media once", asyn
   await f.controller.handleMessage(original);
   await f.controller.recovery.drain();
   assert.equal(f.sent.filter(row => row.text?.mimetype === "image/png").length, 1);
+  assert.equal(f.sent.find(row => row.text?.mimetype === "image/png").options.isViewOnce, false);
   await f.controller.handleMessage(original);
   await f.controller.recovery.drain();
   assert.equal(f.sent.filter(row => row.text?.mimetype === "image/png").length, 1);
+});
+
+test("the actual withheld view-once ciphertext event is recorded and explained once without downloading", async t => {
+  const f = setup(t); let downloads = 0;
+  const placeholder = f.message("", { type: "ciphertext", isViewOnce: false,
+    _data: { subtype: "view_once_unavailable_fanout" }, downloadMedia: async () => { downloads++; } });
+  f.controller.handleUnavailableViewOnce(placeholder);
+  await f.controller.recovery.drain();
+  f.controller.handleUnavailableViewOnce(placeholder);
+  await f.controller.recovery.drain();
+  const row = f.controller.archive.get(placeholder.from, placeholder.id._serialized);
+  assert.equal(row.viewOnce, true);
+  assert.equal(row.mediaStatus, "unavailable");
+  assert.equal(row.reposts.viewonce.status, "unavailable");
+  assert.equal(downloads, 0);
+  assert.equal(f.sent.length, 1);
+  assert.match(f.sent[0].text, /WhatsApp did not deliver this view-once file/);
+  assert.equal(f.actions.length, 0);
+});
+
+test("a withheld placeholder can later receive available media and repost it as a normal photo", async t => {
+  const f = setup(t);
+  const placeholder = f.message("", { type: "ciphertext", _data: { subtype: "view_once_unavailable_fanout" } });
+  f.controller.handleUnavailableViewOnce(placeholder); await f.controller.recovery.drain();
+  const photo = { ...placeholder, type: "image", hasMedia: true, _data: {},
+    downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) };
+  await f.controller.handleMessage(photo); await f.controller.recovery.drain();
+  await f.controller.handleMessage(photo); await f.controller.recovery.drain();
+  const row = f.controller.archive.get(photo.from, photo.id._serialized);
+  assert.equal(row.type, "image");
+  assert.equal(row.mediaUnavailableReason, undefined);
+  assert.equal(row.reposts.viewonce.status, "sent");
+  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 1);
+  assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
+  assert.deepEqual(f.sent.find(row => row.text?.mimetype).options, { isViewOnce: false });
+});
+
+test("media arriving during the unavailable notice is posted after the notice finishes", async t => {
+  const f = setup(t); let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const send = f.chat.sendMessage;
+  f.chat.sendMessage = async (text, options) => {
+    if (typeof text === "string" && text.includes("View-once media unavailable")) {
+      entered(); await new Promise(resolve => { release = resolve; });
+    }
+    return send(text, options);
+  };
+  const placeholder = f.message("", { type: "ciphertext", _data: { subtype: "view_once_unavailable_fanout" } });
+  f.controller.handleUnavailableViewOnce(placeholder); await started;
+  await f.controller.handleMessage({ ...placeholder, type: "image", hasMedia: true, _data: {},
+    downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) });
+  release(); await f.controller.recovery.drain();
+  assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
+  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 1);
+});
+
+test("legacy sent notices without media do not block a later successful download", async t => {
+  const f = setup(t);
+  const original = f.message("", { type: "image", _data: { isViewOnce: true }, downloadMedia: async () => undefined });
+  await f.controller.handleMessage(original); await f.controller.recovery.drain();
+  f.controller.archive.patch(original.from, original.id._serialized, row => { row.reposts.viewonce.status = "sent"; });
+  await f.controller.handleMessage({ ...original, downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) });
+  await f.controller.recovery.drain();
+  assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
+});
+
+test("ordinary ciphertext, personal messages and outgoing placeholders are excluded", async t => {
+  const f = setup(t);
+  for (const extra of [{ _data: { subtype: "decrypt_error" } },
+    { fromMe: true, _data: { subtype: "view_once_unavailable_fanout" } },
+    { from: "300@c.us", _data: { subtype: "view_once_unavailable_fanout" } }]) {
+    f.controller.handleUnavailableViewOnce(f.message("", { type: "ciphertext", ...extra }));
+  }
+  await f.controller.recovery.drain();
+  assert.equal(f.controller.archive.list("1000@g.us").length, 0);
+  assert.equal(f.sent.length, 0);
 });
 
 test("user-deleted media is recovered after its background download finishes", async t => {

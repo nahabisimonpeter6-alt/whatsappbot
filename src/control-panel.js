@@ -57,7 +57,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Moderation: ${prefix}warn USER reason, ${prefix}unwarn USER, ${prefix}d (reply to a message), ${prefix}mute USER MINUTES, ${prefix}unmute USER`,
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
-      `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Only media WhatsApp made available and the bot saved can be recovered. Archive: 24 hours.`,
+      `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Available copies are reposted as normal media. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
       `Automatic recovery: on by default. Admins: ${prefix}set repostdeleted on|off, ${prefix}set repostviewonce on|off. Rejoined members start link warnings from zero.`,
       `Activities: ${prefix}activity help`,
       `Automation: ${prefix}rule list, ${prefix}set approval off|destructive|all, ${prefix}panic, ${prefix}resume, ${prefix}audit`,

@@ -6,7 +6,7 @@ const { createModeration } = require("./moderation");
 const { createAutomations, agenda, localClock } = require("./automations");
 const { createRulesEngine } = require("./rules");
 const { publicError } = require("./permissions");
-const { createMessageArchive } = require("./message-archive");
+const { createMessageArchive, unavailableViewOnce } = require("./message-archive");
 const { installRecoveryCommands } = require("./recovery-commands");
 const { revokeForEveryone } = require("./revoke");
 const { installAutoRecovery } = require("./auto-recovery");
@@ -15,7 +15,7 @@ const { resetLinkCycle } = require("./warning-cycle");
 function createController({ client, storage, prefix = ".", logger = console, now = () => new Date(), ownerNumbers, revoke,
   archive = createMessageArchive(undefined, { now, logger }), makeMedia }) {
   function capture(message) {
-    try { return archive.observe(message); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
+    try { return archive.observe(message, { retryMedia: true }); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
   }
   function handleRevocation(message, original) {
     try {
@@ -120,6 +120,14 @@ function createController({ client, storage, prefix = ".", logger = console, now
     return running;
   }
 
+  function handleUnavailableViewOnce(message) {
+    if (message?.fromMe || !message?.from?.endsWith("@g.us") || !unavailableViewOnce(message)) return;
+    const id = capture(message);
+    if (!id) return;
+    logger.warn("[RECOVERY] WhatsApp withheld a view-once file from this linked Web device (view_once_unavailable_fanout).");
+    recovery.schedule(message.from, id, "viewonce");
+  }
+
   async function processNotification(trigger, notification) {
     try {
       if (!active || !notification.chatId?.endsWith("@g.us")) return;
@@ -176,7 +184,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   }
   function stop() { active = false; automations.stop(); clearInterval(timer); }
   async function tick() { if (!active) return; await automations.tick(); await ruleTick(); }
-  return { engine, panel, rules, archive, recovery, handleMessage, handleRevocation, notification, start, stop, tick };
+  return { engine, panel, rules, archive, recovery, handleMessage, handleUnavailableViewOnce, handleRevocation, notification, start, stop, tick };
 }
 
 module.exports = { createController };

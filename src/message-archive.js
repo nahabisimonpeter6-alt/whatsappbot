@@ -4,7 +4,8 @@ const { randomUUID } = require("node:crypto");
 
 const messageId = message => message?.id?._serialized || message?.id?.$1;
 const keyId = key => key?._serialized || key?.$1;
-const viewOnce = message => !!(message?.isViewOnce || message?._data?.isViewOnce);
+const unavailableViewOnce = message => (message?.subtype || message?._data?.subtype) === "view_once_unavailable_fanout";
+const viewOnce = message => !!(message?.isViewOnce || message?._data?.isViewOnce || unavailableViewOnce(message));
 
 function createMessageArchive(filePath, { now = () => new Date(), logger = console,
   retentionMs = 86400000, perGroup = 200, maxBytes = 100 * 1024 * 1024,
@@ -76,7 +77,10 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
         update(rows => {
           const row = rows.find(row => row.id === id); if (!row) return;
           row.mediaStatus = !valid ? "unavailable" : tooLarge ? "too large (limit 5 MB)" : "saved";
-          if (valid && !tooLarge) row.media = { data: media.data, mimetype: media.mimetype, filename: media.filename || null };
+          if (valid && !tooLarge) {
+            row.media = { data: media.data, mimetype: media.mimetype, filename: media.filename || null };
+            delete row.mediaUnavailableReason;
+          }
         });
       } catch (error) {
         try { update(rows => { const row = rows.find(row => row.id === id); if (row) row.mediaStatus = "unavailable"; }); }
@@ -96,13 +100,14 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
     const isViewOnce = viewOnce(message);
     const hasMedia = !!(message.hasMedia || isViewOnce);
     const size = message._data?.size || message._data?.filesize || 0;
-    const downloadable = hasMedia && size <= maxMediaBytes && downloading.size < 4;
+    const withheld = unavailableViewOnce(message);
+    const downloadable = hasMedia && !withheld && size <= maxMediaBytes && downloading.size < 4;
     if (existing) {
       if (existing.media || pending.has(existing.id) || downloading.has(existing.id)) return existing.id;
       update(rows => {
         const row = rows.find(row => row.id === existing.id); if (!row) return;
         row.viewOnce ||= isViewOnce; row.hasMedia ||= hasMedia;
-        if (row.type === "unknown" && message.type) row.type = message.type;
+        if (["unknown", "ciphertext"].includes(row.type) && message.type) row.type = message.type;
         // Keep the originally saved body, but enrich an empty deletion record.
         if (!row.body && message.body) row.body = String(message.body).slice(0, 65536);
         if (downloadable) row.mediaStatus = "downloading";
@@ -114,7 +119,8 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
     update(rows => rows.push({ id, sourceId, groupId, sender: message.author || "unknown", at: now().valueOf(),
       sentAt: Number.isFinite(message.timestamp) ? message.timestamp * 1000 : now().valueOf(),
       body: String(message.body || "").slice(0, 65536), type: message.type || "chat", viewOnce: isViewOnce,
-      deleted: false, hasMedia, mediaStatus: !hasMedia ? "none" : downloadable ? "downloading" : size > maxMediaBytes ? "too large (limit 5 MB)" : "unavailable", media: null }));
+      deleted: false, hasMedia, mediaStatus: !hasMedia ? "none" : downloadable ? "downloading" : size > maxMediaBytes ? "too large (limit 5 MB)" : "unavailable", media: null,
+      ...(withheld ? { mediaUnavailableReason: "WhatsApp did not deliver this view-once file to the linked Web device." } : {}) }));
     if (downloadable) void download(message, id);
     return id;
   }
@@ -153,4 +159,4 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
   return { observe, revoked, list, get, sweep, patch, suppress, waitFor: id => pending.get(id) || Promise.resolve() };
 }
 
-module.exports = { createMessageArchive, messageId, viewOnce };
+module.exports = { createMessageArchive, messageId, viewOnce, unavailableViewOnce };

@@ -69,6 +69,11 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   client.on("message", message => {
     if (ready && !stopping) void controller.handleMessage(message);
   });
+  // WhatsApp sends withheld view-once media through this event, never through
+  // "message". Such a placeholder contains no downloadable file or key.
+  client.on("message_ciphertext", message => {
+    if (ready && !stopping) controller.handleUnavailableViewOnce(message);
+  });
   client.on("message_revoke_everyone", (message, original) => {
     if (ready && !stopping) controller.handleRevocation(message, original);
   });
