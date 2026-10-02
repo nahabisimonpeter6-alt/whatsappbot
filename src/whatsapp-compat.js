@@ -39,4 +39,16 @@ function installWhatsAppCompatibility() {
   utils.LoadUtils = patched;
 }
 
-module.exports = { compatibleUtils, installWhatsAppCompatibility };
+async function recoverMissedAuthSync(client, hasAuthenticated = () => false) {
+  if (!client.pupPage || hasAuthenticated()) return false;
+  return client.pupPage.evaluate(async () => {
+    // The pinned library subscribes to change:hasSynced without checking its
+    // current value. A restored session can finish syncing before subscription.
+    const socket = window.require("WAWebSocketModel").Socket;
+    if (!socket.hasSynced || window.WWebJS || typeof window.onAppStateHasSyncedEvent !== "function") return false;
+    await window.onAppStateHasSyncedEvent();
+    return true;
+  });
+}
+
+module.exports = { compatibleUtils, installWhatsAppCompatibility, recoverMissedAuthSync };

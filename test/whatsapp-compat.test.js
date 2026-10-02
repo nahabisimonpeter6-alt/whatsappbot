@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
-const { compatibleUtils } = require("../src/whatsapp-compat");
+const { compatibleUtils, recoverMissedAuthSync } = require("../src/whatsapp-compat");
 const { LoadUtils } = require("whatsapp-web.js/src/util/Injected/Utils");
 
 function fixture() {
@@ -80,4 +80,33 @@ test("editing an existing message returns it using the renamed key", async () =>
 
 test("a changed injection fails visibly rather than silently applying a partial patch", () => {
   assert.throws(() => compatibleUtils(() => {}), /no longer matches/);
+});
+
+function authFixture({ synced = true, injected = false, callback = true } = {}) {
+  let recovered = 0;
+  const window = { require: () => ({ Socket: { hasSynced: synced } }) };
+  if (injected) window.WWebJS = {};
+  if (callback) window.onAppStateHasSyncedEvent = async () => { recovered++; };
+  const client = { pupPage: { evaluate: fn => vm.runInNewContext(`(${fn.toString()})()`, { window }) } };
+  return { client, recovered: () => recovered };
+}
+
+test("a restored session already synced before subscription recovers its missed ready callback", async () => {
+  const f = authFixture();
+  assert.equal(await recoverMissedAuthSync(f.client), true);
+  assert.equal(f.recovered(), 1);
+});
+
+for (const options of [{ synced: false }, { injected: true }, { callback: false }]) {
+  test(`auth sync recovery leaves normal initialization unchanged: ${JSON.stringify(options)}`, async () => {
+    const f = authFixture(options);
+    assert.equal(await recoverMissedAuthSync(f.client), false);
+    assert.equal(f.recovered(), 0);
+  });
+}
+
+test("auth sync recovery skips a callback already signaled by the library", async () => {
+  const f = authFixture();
+  f.client.pupPage.evaluate = () => { throw new Error("An authenticated client must not be reinjected"); };
+  assert.equal(await recoverMissedAuthSync(f.client, () => true), false);
 });

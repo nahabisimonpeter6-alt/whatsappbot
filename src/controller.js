@@ -6,9 +6,25 @@ const { createModeration } = require("./moderation");
 const { createAutomations, agenda, localClock } = require("./automations");
 const { createRulesEngine } = require("./rules");
 const { publicError } = require("./permissions");
+const { createMessageArchive } = require("./message-archive");
+const { installRecoveryCommands } = require("./recovery-commands");
+const { revokeForEveryone } = require("./revoke");
 
-function createController({ client, storage, prefix = ".", logger = console, now = () => new Date(), ownerNumbers, revoke }) {
-  const options = { client, storage, prefix, logger, now, ownerNumbers, revoke };
+function createController({ client, storage, prefix = ".", logger = console, now = () => new Date(), ownerNumbers, revoke,
+  archive = createMessageArchive(undefined, { now, logger }), makeMedia }) {
+  function capture(message) {
+    try { archive.observe(message); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
+  }
+  function handleRevocation(message, original) {
+    try { archive.revoked(message, original); } catch (error) { logger.error("[ARCHIVE] deletion capture failed:", error); }
+  }
+  const options = { client, storage, prefix, logger, now, ownerNumbers, archive, makeMedia,
+    revoke: async (sender, message) => {
+      capture(message);
+      await (revoke || revokeForEveryone)(sender, message);
+      handleRevocation(message, message);
+    }
+  };
   const engine = createCommandEngine(options);
   let panel, rules;
   let active = false, timer, ruleTicking = false;
@@ -61,6 +77,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   const core = installCoreCommands(engine, options);
   panel = installControlPanel(engine, options);
   installAuditCommands(engine, options, core);
+  installRecoveryCommands(engine, options);
   rules = createRulesEngine(engine, options);
   for (const [, group] of storage.entries()) rules.validateRules(group.rules);
   engine.afterRun = async (_entry, ctx, outcome) => {
@@ -78,6 +95,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
 
   function handleMessage(message) {
     if (message?.fromMe) return Promise.resolve();
+    capture(message);
     const groupId = message?.from;
     const command = invocation(String(message?.body || ""), prefix)?.name;
     if (!groupId?.endsWith("@g.us") || engine.get(command)?.urgent) return processMessage(message);
@@ -117,7 +135,10 @@ function createController({ client, storage, prefix = ".", logger = console, now
   async function ruleTick() {
     if (!active || ruleTicking) return;
     ruleTicking = true;
-    try { await rules.tick(); } catch (error) { logger.error("[RULE] scheduler failed:", error); } finally { ruleTicking = false; }
+    try {
+      try { archive.sweep(); } catch (error) { logger.error("[ARCHIVE] cleanup failed:", error); }
+      await rules.tick();
+    } catch (error) { logger.error("[RULE] scheduler failed:", error); } finally { ruleTicking = false; }
   }
   function start() {
     if (active) return;
@@ -127,7 +148,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   }
   function stop() { active = false; automations.stop(); clearInterval(timer); }
   async function tick() { if (!active) return; await automations.tick(); await ruleTick(); }
-  return { engine, panel, rules, handleMessage, notification, start, stop, tick };
+  return { engine, panel, rules, archive, handleMessage, handleRevocation, notification, start, stop, tick };
 }
 
 module.exports = { createController };

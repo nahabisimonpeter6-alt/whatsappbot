@@ -20,6 +20,7 @@ Scan the terminal QR code using WhatsApp **Linked devices**. Add the bot to your
 | `PREFIX` | `.` | Command prefix |
 | `SESSION_PATH` | Project's `data/session` folder | Persistent WhatsApp session storage |
 | `AUTOMATION_STATE_PATH` | `automations.json` inside `SESSION_PATH` | Saved settings, schedules, warnings, rules, approvals, and audit records |
+| `MESSAGE_ARCHIVE_PATH` | `message-archive.json` inside `SESSION_PATH` | Local 24-hour archive for admin message/media recovery |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Installed browser executable |
 | `OWNER_NUMBERS` | Empty | Comma-separated international owner phone numbers, e.g. `256700123456,256700654321` |
 
@@ -57,6 +58,8 @@ Use a full international phone number, `NUMBER@c.us`, or `NUMBER@lid` as a targe
 | `.help` | List member, moderation, activity, and admin commands |
 | `.antilink on`, `.antilink off`, `.antilink status` | Restore/enable default link deletion, warnings and fourth-offence removal, disable these rules, or show moderation blockers |
 | `.warn USER [reason]` / `.unwarn USER` | Add/remove a warning |
+| `.deleted` / `.retrieve [ID]` | Admins list saved deletions or repost a saved copy; omitting ID retrieves the latest deletion |
+| `.viewonce list` / `.viewonce [ID]` | Admins list or retrieve available saved view-once media; also accepts a reply to the media |
 | `.d` / `.delete MESSAGE_ID` | Delete a quoted message or specified message for everyone |
 | `.r` / `.remove USER` | Remove the quoted member or specified member |
 | `.mute USER MINUTES` / `.unmute USER` | Locally delete that member's future messages; duration 1–1440 minutes |
@@ -183,7 +186,7 @@ Rules use only commands marked `automationSafe`. Administrative configuration, p
 
 Each group retains its latest 200 audit records, including actor type/ID, command arguments, target, result, dry-run flag, and approver. A side-effect intent is saved before acting; if it cannot be saved, the operation stops. Audit-write failures pause automation in memory until recovery and `.resume`.
 
-`.undo ID` removes an added warning, restores local mute/ban state, or restores group posting permissions when the previous value was known. An action can be undone once. Disabled commands, current permissions, bot privileges, and dry-run still apply to the reversal. Deleted messages cannot be restored. Undoing a ban clears the local ban but does not re-add the removed member; an admin must invite them. A completed standalone removal has no automatic reversal. State after a crash between an external action and its final audit update can remain recorded as `running`; exactly-once external delivery is not guaranteed.
+`.undo ID` removes an added warning, restores local mute/ban state, or restores group posting permissions when the previous value was known. An action can be undone once. Disabled commands, current permissions, bot privileges, and dry-run still apply to the reversal. Deleted messages cannot be restored to their original place; `.retrieve` can repost an available archived copy. Undoing a ban clears the local ban but does not re-add the removed member; an admin must invite them. A completed standalone removal has no automatic reversal. State after a crash between an external action and its final audit update can remain recorded as `running`; exactly-once external delivery is not guaranteed.
 
 ## Adding a command
 
@@ -211,6 +214,26 @@ engine.register({
 Context contains `groupId`, `actor` (`user`, `system`, or `rule` plus ID), `target`, parsed `args`, `reply`, `client`, `storage`, `dryRun`, and resolved `chat`. `effect: true` is required for operational side effects so dry-run and approvals intercept them. Mark destructive operations appropriately. Targeted automatic moderation must set `targetSafety: true` and a `resolveTarget(ctx, permissions)` resolver; use the shared target helpers. A `minimumRole` floor protects admin controls from permission overrides. Return `{ undo: { command, target, args }, irreversible }` when applicable.
 
 All entry points call `engine.executeCommand(name, ctx)`. Nested commands call `ctx.executeCommand(name, overrides)` to preserve actor, target group, and chain restrictions. Do not call another command's `run` directly or send a command message from the linked account. The central engine handles authorization, enabled state, rate limits, dry-run, approvals, destructive capacity, bounded execution, audit, and error reporting. Keep argument validation in the parser/run and target/identity resolution in the resolver. Add fake-client tests for permissions and actual side effects when adding an operational command.
+
+## Retrieving deleted messages and view-once media
+
+From another group admin account, send `.help` for the recovery commands:
+
+```text
+.deleted
+.retrieve ID
+.retrieve
+.viewonce list
+.viewonce ID
+```
+
+`.deleted` lists up to ten recently deleted messages, with IDs and original senders. `.retrieve ID` (also `.restore ID`) reposts the bot's saved copy. With no ID, it retrieves the most recent saved deletion. An admin can also reply to a message with `.retrieve` or `.viewonce`. `.viewonce list` lists saved view-once records; `.viewonce` without an ID selects the latest one. For private recovery, DM the bot `.groups`, then `.use GROUP_ID`, then these commands; copies are delivered to that admin's chat. Current admin/owner authorization is checked each time, and moderators and ordinary members cannot retrieve saved content.
+
+The bot records incoming group messages while connected and saves available media in the background. It marks deletions from both its own moderation and WhatsApp's `message_revoke_everyone` event. When that event includes the original text, it can save it even if the earlier incoming event was missed. This is a **reposted copy**, not restoration of the original WhatsApp message. Content deleted before it was saved, missing media, and expired archive records cannot be reconstructed. WhatsApp can omit the original deletion snapshot; see the library's [deletion event documentation](https://docs.wwebjs.dev/Client.html#event:message_revoke_everyone).
+
+View-once recovery is **best effort**: the bot attempts the library's normal media download when the content arrives. Admin retrieval retries an unsuccessful download if the original message remains available in the same group, including when replying to the media. It can repost a copy only if WhatsApp exposed downloadable media to the linked account and the download succeeded. WhatsApp often withholds view-once media from web clients; the library has documented [unavailable view-once downloads](https://github.com/wwebjs/whatsapp-web.js/issues/3349). The bot reports this limitation and asks for the content to be resent as normal media. It does not guarantee retrieval of already viewed or unavailable media.
+
+The local archive expires after **24 hours**, retains at most **200 messages per group**, and has a **100 MB total serialized size limit**. Older records are evicted when capacity is reached. Each media download is limited to **5 MB**, four concurrent downloads, and a ten-second wait; larger/unavailable media can still retain its caption. Archiving and downloads operate independently of rule autopilot/panic; they do not block moderation on media downloads. Personal chats and messages sent by the linked bot account are excluded. The archive is stored with owner-only file permissions in the session volume, alongside the other persistent bot data. Expiry runs on access, startup, and the minute scheduler while connected.
 
 ## Activity announcements
 
@@ -255,7 +278,7 @@ The included `railway.json` configures Docker deployment, `/live` as the deploym
 | `/health` | HTTP 200 with `ok: true, ready: true` only when WhatsApp is connected; otherwise HTTP 503 |
 | `/` | Basic service response; does not indicate WhatsApp readiness |
 
-Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
+Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. Startup also checks whether a restored session finished syncing before the library registered its listener and recovers the missing readiness callback. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
 
 ## Verification
 
@@ -281,6 +304,7 @@ For a live test after pairing, use another account:
 16. Set a small cap in the test group and confirm excess automated deletion/removal pauses automation and alerts admins. Restore the cap and resume.
 17. Test local mute/unmute, local ban/unban on rejoining, and lock/unlock. Use `.audit` IDs with `.undo` and confirm reversible state changes and clear replies for irreversible operations.
 18. Export/import settings, use a macro from accounts with different permissions, and confirm FAQ replies. Verify warnings, delegation, rules, and proposals remain after restart.
+19. Send a normal text and small photo from another account, delete them for everyone, then use `.deleted` and `.retrieve ID` as an admin. Confirm saved text/media return, and ordinary members and delegated moderators cannot access them. Send view-once media and try `.viewonce`; confirm available copies return or unavailable media produces an explanation. Restart with the same session volume and verify the saved archive remains available until expiry.
 
 The revocation adapter intentionally avoids the library's local-delete fallback and uses WhatsApp Web's internal revocation action. The WhatsApp library is pinned; recheck this adapter against the official [Message source](https://docs.wwebjs.dev/structures_Message.js.html) before upgrading. Live pairing and moderation must still be verified against WhatsApp.
 

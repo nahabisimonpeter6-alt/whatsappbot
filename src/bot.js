@@ -3,11 +3,14 @@ const express = require("express");
 const qrcode = require("qrcode-terminal");
 const { createController } = require("./controller");
 const { createAutomationStore } = require("./automation-store");
+const { createMessageArchive } = require("./message-archive");
+const { recoverMissedAuthSync } = require("./whatsapp-compat");
 
-function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke }) {
+function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
   const app = express();
-  const controller = createController({ client, storage: automationStore, prefix, logger, now, ownerNumbers, revoke });
+  const controller = createController({ client, storage: automationStore, prefix, logger, now, ownerNumbers, revoke, archive, makeMedia });
   let ready = false;
+  let authenticated = false;
   let stopping = false;
   let stopPromise;
 
@@ -52,7 +55,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
     logger.log("[WHATSAPP] Scan this QR from WhatsApp > Linked devices.");
     qrcode.generate(qr, { small: true });
   });
-  client.on("authenticated", () => logger.log("[WHATSAPP] authenticated"));
+  client.on("authenticated", () => { authenticated = true; logger.log("[WHATSAPP] authenticated"); });
   client.on("ready", () => {
     if (stopping) return;
     ready = true;
@@ -64,6 +67,9 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   client.on("loading_screen", (percent, message) => logger.log(`[WHATSAPP] loading ${percent}% - ${message}`));
   client.on("message", message => {
     if (ready && !stopping) void controller.handleMessage(message);
+  });
+  client.on("message_revoke_everyone", (message, original) => {
+    if (ready && !stopping) controller.handleRevocation(message, original);
   });
 
   client.on("group_join", notification => {
@@ -78,7 +84,10 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   });
 
   // Defer startup so synchronous initialization errors also reach fail().
-  const initialization = Promise.resolve().then(() => client.initialize()).catch(error => {
+  const initialization = Promise.resolve().then(async () => {
+    await client.initialize();
+    if (!stopping && !ready) await recoverMissedAuthSync(client, () => authenticated);
+  }).catch(error => {
     fail("[WHATSAPP] initialization failed:", error);
     return stopPromise;
   });
@@ -93,6 +102,7 @@ function startBot() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be between 1 and 65535.");
   const sessionPath = process.env.SESSION_PATH || path.join(__dirname, "..", "data", "session");
   const automationStore = createAutomationStore(process.env.AUTOMATION_STATE_PATH || path.join(sessionPath, "automations.json"));
+  const archive = createMessageArchive(process.env.MESSAGE_ARCHIVE_PATH || path.join(sessionPath, "message-archive.json"));
   const client = new Client({
     authStrategy: new LocalAuth({
       dataPath: sessionPath
@@ -103,7 +113,7 @@ function startBot() {
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     }
   });
-  const runtime = createRuntime({ client, port, prefix: process.env.PREFIX || ".", automationStore });
+  const runtime = createRuntime({ client, port, prefix: process.env.PREFIX || ".", automationStore, archive });
   process.once("SIGTERM", () => void runtime.stop(0));
   process.once("SIGINT", () => void runtime.stop(0));
   return runtime;

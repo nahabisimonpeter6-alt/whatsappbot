@@ -56,6 +56,8 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Members: ${prefix}ping, ${prefix}activities, ${prefix}cmds`,
       `Moderation: ${prefix}warn USER reason, ${prefix}unwarn USER, ${prefix}d (reply to a message), ${prefix}mute USER MINUTES, ${prefix}unmute USER`,
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
+      `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
+      `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Only media WhatsApp made available and the bot saved can be recovered. Archive: 24 hours.`,
       `Activities: ${prefix}activity help`,
       `Automation: ${prefix}rule list, ${prefix}set approval off|destructive|all, ${prefix}panic, ${prefix}resume, ${prefix}audit`,
       `Private admin control: ${prefix}groups, then ${prefix}use GROUP_ID`,

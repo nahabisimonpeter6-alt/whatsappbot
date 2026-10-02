@@ -48,6 +48,30 @@ test("synchronous initialization errors are also fatal", async () => {
   assert.equal(f.runtime.server.listening, false);
 });
 
+test("runtime recovers readiness when a paired session was synced before listener registration", async t => {
+  let release;
+  const f = fixture(() => new Promise(resolve => { release = resolve; })); t.after(() => f.runtime.stop()); await listen(f);
+  const window = {
+    require: () => ({ Socket: { hasSynced: true } }),
+    onAppStateHasSyncedEvent: async () => { f.client.emit("authenticated"); f.client.emit("ready"); }
+  };
+  f.client.pupPage = { evaluate: fn => require("node:vm").runInNewContext(`(${fn.toString()})()`, { window }) };
+  release();
+  await f.runtime.initialization;
+  const response = await fetch(`http://127.0.0.1:${f.runtime.server.address().port}/health`);
+  assert.equal(response.status, 200);
+});
+
+test("auth sync recovery errors stop the runtime instead of leaving it disconnected indefinitely", async t => {
+  let release;
+  const f = fixture(() => new Promise(resolve => { release = resolve; })); t.after(() => f.runtime.stop()); await listen(f);
+  f.client.pupPage = { evaluate: async () => { throw new Error("Ready callback failed"); } };
+  release();
+  await f.runtime.initialization;
+  assert.deepEqual(f.exits, [1]);
+  assert.equal(f.destroyed(), 1);
+});
+
 for (const event of ["disconnected", "auth_failure"]) {
   test(`${event} stops the bot for supervisor restart`, async () => {
     const f = fixture(); await listen(f); await f.runtime.initialization;
@@ -76,6 +100,18 @@ test("messages before readiness are ignored and ping works after readiness", asy
   f.client.emit("ready"); f.client.emit("message", message);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(replies, ["pong"]);
+});
+
+test("the runtime captures deletion events only while ready and retains the original text", async t => {
+  const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
+  const original = { from: "1000@g.us", author: "300@lid", id: { _serialized: "deleted" }, type: "chat", body: "Saved content" };
+  const revoked = { ...original, type: "revoked", body: "" };
+  f.client.emit("message_revoke_everyone", revoked, original);
+  assert.equal(f.runtime.controller.archive.list("1000@g.us").length, 0);
+  f.client.emit("ready");
+  f.client.emit("message_revoke_everyone", revoked, original);
+  assert.equal(f.runtime.controller.archive.get("1000@g.us", "deleted").body, "Saved content");
+  assert.equal(f.runtime.controller.archive.get("1000@g.us", "deleted").deleted, true);
 });
 
 test("runtime welcomes group joins only after readiness", async t => {

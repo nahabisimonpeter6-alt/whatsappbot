@@ -227,6 +227,109 @@ test("help exposes moderation and automation commands to users", async t => {
   await command(f, ".help", "400@c.us");
   assert.match(f.sent.at(-1).text, /antilink on\|off\|status/);
   assert.match(f.sent.at(-1).text, /warn USER/);
+  assert.match(f.sent.at(-1).text, /retrieve ID/);
+  assert.match(f.sent.at(-1).text, /viewonce list/);
+});
+
+test("admins recover bot-deleted links; members and moderators cannot read the archive", async t => {
+  const f = setup(t);
+  await command(f, "https://example.com Important information", "300@lid");
+  const saved = f.controller.archive.list("1000@g.us", row => row.deleted)[0];
+  assert.ok(saved);
+  await command(f, ".deleted", "400@c.us");
+  assert.match(f.sent.at(-1).text, /Admins only/);
+  await command(f, ".mod add 400@c.us");
+  await command(f, `.retrieve ${saved.id}`, "400@c.us");
+  assert.match(f.sent.at(-1).text, /Admins only/);
+  await command(f, ".deleted");
+  assert.ok(f.sent.at(-1).text.includes(saved.id));
+  await command(f, `.retrieve ${saved.id}`);
+  assert.match(f.sent.at(-1).text, /https:\/\/example.com Important information/);
+});
+
+test("private admin recovery delivers the saved message to that admin's chat", async t => {
+  const f = setup(t);
+  const original = f.message("Meeting starts at nine", "300@lid");
+  await f.controller.handleMessage(original);
+  f.controller.handleRevocation({ ...original, body: "", type: "revoked" });
+  await command(f, ".use 1000@g.us", "200@c.us", true);
+  await command(f, ".retrieve", "200@c.us", true);
+  assert.match(f.sent.at(-1).text, /Meeting starts at nine/);
+});
+
+test("view-once retrieval returns available media and explains unavailable media", async t => {
+  const f = setup(t);
+  const incoming = f.message("", "300@lid");
+  incoming.id._serialized = "viewonce-photo";
+  Object.assign(incoming, { type: "image", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "image/png", data: Buffer.from("picture").toString("base64"), filename: "photo.png" }) });
+  await f.controller.handleMessage(incoming);
+  const saved = f.controller.archive.get("1000@g.us", "viewonce-photo");
+  await command(f, `.viewonce ${saved.id}`);
+  assert.equal(f.sent.at(-1).text.mimetype, "image/png");
+  assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "picture");
+  const hidden = f.message("", "300@lid");
+  hidden.id._serialized = "hidden-photo";
+  Object.assign(hidden, { type: "image", _data: { isViewOnce: true }, downloadMedia: async () => undefined });
+  await f.controller.handleMessage(hidden);
+  await command(f, ".viewonce");
+  assert.match(f.sent.at(-1).text, /cannot be retrieved/);
+});
+
+test("recovery cannot use an ID or quote from a different group", async t => {
+  const f = setup(t);
+  const id = f.controller.archive.observe({ id: { _serialized: "other-group" }, from: "2000@g.us", author: "300@lid", body: "Secret", type: "chat" });
+  await command(f, `.retrieve ${id}`);
+  assert.match(f.sent.at(-1).text, /No saved message found/);
+  const request = f.message(".retrieve");
+  request.hasQuotedMsg = true;
+  request.getQuotedMessage = async () => ({ from: "2000@g.us", id: { _serialized: "other-group" }, body: "Secret", type: "chat" });
+  await f.controller.handleMessage(request);
+  assert.match(f.sent.at(-1).text, /No saved message found/);
+});
+
+test("view-once retrieval retries media still available from the original message", async t => {
+  const f = setup(t);
+  const incoming = f.message("", "300@lid");
+  incoming.id._serialized = "retry-viewonce";
+  Object.assign(incoming, { type: "image", hasMedia: true, _data: { isViewOnce: true }, downloadMedia: async () => undefined });
+  await f.controller.handleMessage(incoming);
+  const saved = f.controller.archive.get("1000@g.us", "retry-viewonce");
+  await f.controller.archive.waitFor(saved.id);
+  f.client.getMessageById = async id => {
+    assert.equal(id, "retry-viewonce");
+    return { ...incoming, downloadMedia: async () => ({ mimetype: "image/png", data: Buffer.from("retried picture").toString("base64") }) };
+  };
+  await command(f, `.viewonce ${saved.id}`);
+  assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "retried picture");
+});
+
+test("a media retry rejects a fetched message belonging to another group", async t => {
+  const f = setup(t);
+  const incoming = f.message("", "300@lid");
+  incoming.id._serialized = "isolated-viewonce";
+  Object.assign(incoming, { type: "image", hasMedia: true, _data: { isViewOnce: true }, downloadMedia: async () => undefined });
+  await f.controller.handleMessage(incoming);
+  const saved = f.controller.archive.get("1000@g.us", "isolated-viewonce");
+  await f.controller.archive.waitFor(saved.id);
+  f.client.getMessageById = async () => ({ ...incoming, from: "2000@g.us", body: "Private content",
+    downloadMedia: async () => { throw new Error("A cross-group download must never start"); } });
+  await command(f, `.viewonce ${saved.id}`);
+  assert.match(f.sent.at(-1).text, /cannot be retrieved/);
+  assert.equal(f.controller.archive.get("1000@g.us", saved.id).body, "");
+});
+
+test("media downloading in the background does not block link deletion and warnings", async t => {
+  const f = setup(t);
+  let release;
+  const incoming = f.message("https://example.com", "300@lid");
+  Object.assign(incoming, { hasMedia: true, downloadMedia: () => new Promise(resolve => { release = resolve; }) });
+  await f.controller.handleMessage(incoming);
+  assert.equal(f.actions.filter(row => row.type === "delete").length, 1);
+  assert.equal(f.storage.get("1000@g.us").linkWarnings["300@lid"], 1);
+  release(undefined);
+  const saved = f.controller.archive.list("1000@g.us", row => row.deleted)[0];
+  await f.controller.archive.waitFor(saved.id);
 });
 
 test("welcomes, bot promotion, raid locking and panic use real controller event paths", async t => {
@@ -263,6 +366,15 @@ test("the activity scheduler sends once, respects panic and records the system a
   assert.equal(f.sent.filter(row => row.text.startsWith("📅 Activities")).length, 1);
   assert.equal(f.storage.get("1000@g.us").lastAnnouncementDate, "2026-10-02");
   assert.ok(f.storage.get("1000@g.us").audit.some(row => row.command === "agenda" && row.actor.type === "system"));
+});
+
+test("archive cleanup failure does not prevent scheduled rules from running", async t => {
+  const f = setup(t);
+  await addRule(f, 'WHEN schedule("07:00") THEN ping');
+  f.controller.archive.sweep = () => { throw new Error("Archive cleanup failed"); };
+  await start(f);
+  assert.equal(f.sent.filter(row => row.text === "pong").length, 1);
+  assert.ok(f.storage.get("1000@g.us").audit.some(row => row.command === "ping" && row.result === "success"));
 });
 
 test("local mute enforcement, FAQ and explicit rule targets work through message handling", async t => {
