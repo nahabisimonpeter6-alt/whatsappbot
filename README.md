@@ -20,7 +20,7 @@ On a Linux desktop with systemd, stop any foreground bot first and run `npm run 
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP listening port |
 | `PREFIX` | `.` | Command prefix |
-| `SESSION_PATH` | Project's `data/session` folder | Persistent WhatsApp session storage |
+| `SESSION_PATH` | Railway's attached volume mount, otherwise the project's `data/session` folder | Persistent WhatsApp session storage; overrides must stay inside the Railway volume |
 | `AUTOMATION_STATE_PATH` | `automations.json` inside `SESSION_PATH` | Saved settings, schedules, warnings, rules, approvals, and audit records |
 | `MESSAGE_ARCHIVE_PATH` | `message-archive.json` inside `SESSION_PATH` | Local 24-hour archive for admin message/media recovery |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Installed browser executable |
@@ -299,9 +299,13 @@ To keep the bot running when your PC is shut down or asleep, deploy it to an alw
 
 Follow the [24/7 hosting guide](docs/24-7-hosting.md) to deploy this GitHub repository to Railway, attach persistent storage, pair WhatsApp and move your activity settings. Cloud deployment requires your own Railway account and a phone for the initial QR scan; committing these files does not deploy or pair a cloud bot.
 
-Deploy using the included Dockerfile. It installs Chromium and uses `npm ci` with the checked-in lockfile. Mount a persistent Railway volume at `/app/data/session`; the Docker image sets `SESSION_PATH` to this location. Use a single running instance for each paired WhatsApp account.
+Deploy using the included Dockerfile. It installs Chromium and uses `npm ci` with the checked-in lockfile. Mount a persistent Railway volume at `/app/data/session`; startup automatically uses Railway's volume mount as the session directory unless you explicitly set `SESSION_PATH`. Keep the same volume and session path used when pairing. Use a single running instance for each paired WhatsApp account.
 
-The included `railway.json` configures Docker deployment, one replica, Serverless sleeping disabled, `/live` as the deployment healthcheck and the `ALWAYS` restart policy. **This configuration requires a paid Railway plan** because Free/Trial plans do not support `ALWAYS`. Railway Hobby currently starts at $5/month including $5 of resource usage; usage above that adds to the bill. See Railway's [restart policy](https://docs.railway.com/deployments/restart-policy), [pricing](https://docs.railway.com/pricing/plans) and [configuration reference](https://docs.railway.com/config-as-code/reference).
+The included `railway.json` configures Docker deployment, one replica, Serverless sleeping disabled, `/live` as the deployment healthcheck and `ON_FAILURE` with up to 10 restarts. This avoids the `ALWAYS` policy rejection on Free/Trial. For paid hosting, select `/railway.always.json` as the service's Railway Config File to use unlimited `ALWAYS` restarts. Railway Hobby currently starts at $5/month including $5 of resource usage; usage above that adds to the bill. See Railway's [restart policy](https://docs.railway.com/deployments/restart-policy), [pricing](https://docs.railway.com/pricing/plans) and [configuration reference](https://docs.railway.com/config-as-code/reference).
+
+Railway currently supports these legacy JSON configuration files only for services already using Config as Code, until December 1, 2026. For a service without that support, set the equivalent Dockerfile, `/live`, one-instance, awake and restart settings in its dashboard. See [Railway's current configuration guidance](https://docs.railway.com/config-as-code).
+
+Startup reuses an existing profile inside the Railway volume, including the older Docker session location and legacy `.wwebjs_auth` folders, without moving pairing files. It logs the session directory and whether a saved browser profile exists. It warns if Railway has no persistent volume, checks write access, and rejects session paths outside the mounted volume. On a single Railway volume, stale Chromium lock symlinks from a previous container are removed without deleting pairing or group data. A live browser on the same host blocks a second instance. These checks address storage and browser startup failures; they cannot restore pairing files lost with an old container. See the [already-paired Railway troubleshooting steps](docs/24-7-hosting.md#already-scanned-a-qr-on-railway).
 
 | Endpoint | Meaning |
 | --- | --- |

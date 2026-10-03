@@ -6,6 +6,7 @@ const { createAutomationStore } = require("./automation-store");
 const { createMessageArchive } = require("./message-archive");
 const { recoverMissedAuthSync } = require("./whatsapp-compat");
 const { downloadAvailableMedia } = require("./media");
+const { prepareSessionStorage } = require("./session-storage");
 
 function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, startupTimeoutMs = 300000, browserCheckIntervalMs = 1000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
   const app = express();
@@ -159,7 +160,7 @@ function startBot() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be between 1 and 65535.");
   const startupTimeoutMs = Number(process.env.WHATSAPP_STARTUP_TIMEOUT_MS || 300000);
   if (!Number.isInteger(startupTimeoutMs) || startupTimeoutMs < 1000 || startupTimeoutMs > 3600000) throw new Error("WHATSAPP_STARTUP_TIMEOUT_MS must be between 1000 and 3600000.");
-  const sessionPath = process.env.SESSION_PATH || path.join(__dirname, "..", "data", "session");
+  const sessionPath = prepareSessionStorage();
   const automationStore = createAutomationStore(process.env.AUTOMATION_STATE_PATH || path.join(sessionPath, "automations.json"));
   const client = new Client({
     authStrategy: new LocalAuth({

@@ -44,7 +44,6 @@ COPY . .
 RUN mkdir -p /app/data/session
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV SESSION_PATH=/app/data/session
 
 EXPOSE 8080
 CMD ["node","src/bot.js"]
