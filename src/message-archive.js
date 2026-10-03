@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { cleanName, userId } = require("./recovery-attribution");
 
 const messageId = message => message?.id?._serialized || message?.id?.$1;
 const keyId = key => key?._serialized || key?.$1;
@@ -116,7 +117,7 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
       return existing.id;
     }
     const id = randomUUID().slice(0, 8);
-    update(rows => rows.push({ id, sourceId, groupId, sender: message.author || "unknown", at: now().valueOf(),
+    update(rows => rows.push({ id, sourceId, groupId, sender: message.author || "unknown", senderName: cleanName(message._data?.notifyName), at: now().valueOf(),
       sentAt: Number.isFinite(message.timestamp) ? message.timestamp * 1000 : now().valueOf(),
       body: String(message.body || "").slice(0, 65536), type: message.type || "chat", viewOnce: isViewOnce,
       deleted: false, hasMedia, mediaStatus: !hasMedia ? "none" : downloadable ? "downloading" : size > maxMediaBytes ? "too large (limit 5 MB)" : "unavailable", media: null,
@@ -140,6 +141,9 @@ function createMessageArchive(filePath, { now = () => new Date(), logger = conso
         rows.push(row);
       }
       row.deleted = true;
+      const deletedBy = userId(message?._data?.revokeSender || message?.revokeSender);
+      if (deletedBy) row.deletedBy = deletedBy;
+      row.senderName ||= cleanName(original?._data?.notifyName);
     });
     return get(groupId, sourceId)?.id;
   }

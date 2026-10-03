@@ -1,6 +1,7 @@
 const { publicError } = require("./permissions");
 const { raw } = require("./core-commands");
 const { messageId } = require("./message-archive");
+const { recoveryAttribution } = require("./recovery-attribution");
 
 function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = media => {
   const { MessageMedia } = require("whatsapp-web.js");
@@ -45,7 +46,8 @@ function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = me
       if (!row.body && !row.media) throw publicError(row.viewOnce
         ? "WhatsApp did not make this view-once media available to the bot, so it cannot be retrieved. Ask the sender to resend it as normal media."
         : "The original content was not saved or its media was unavailable, so this deleted message cannot be recovered.");
-      await ctx.reply(`📥 Saved copy from ${row.sender}\n${row.body || `[${row.type}]`}${row.hasMedia && !row.media ? `\nMedia unavailable: ${row.mediaStatus}.` : ""}`);
+      const attribution = await recoveryAttribution(ctx.client, row, name === "viewonce" || !row.deleted ? "viewonce" : "deleted");
+      await ctx.reply(`📥 Saved copy\n${attribution.text}\n${row.body || `[${row.type}]`}${row.hasMedia && !row.media ? `\nMedia unavailable: ${row.mediaStatus}.` : ""}`);
       if (row.media) await ctx.reply(makeMedia(row.media));
       return { archivedId: row.id };
     }

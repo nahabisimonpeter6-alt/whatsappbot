@@ -1,6 +1,7 @@
 const { makeMessageMedia } = require("./media");
 const { containsLink } = require("./links");
 const { messageId } = require("./message-archive");
+const { recoveryAttribution } = require("./recovery-attribution");
 
 function installAutoRecovery(engine, { client, storage, archive, logger = console, isActive, makeMedia = makeMessageMedia }) {
   const jobs = new Set();
@@ -29,7 +30,12 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
       const content = row.body || (row.media ? `[${row.type}]` : row.mediaUnavailableReason || "The original media was not made available to the bot and could not be recovered.");
       try {
         if (!previous.textSent) {
-          await ctx.chat.sendMessage(`${title}\nFrom: ${row.sender}\n${content}${row.hasMedia && !row.media && row.body ? "\nMedia unavailable." : ""}`);
+          const attribution = await recoveryAttribution(client, row, kind);
+          archive.patch(ctx.groupId, row.id, current => {
+            current.senderName = attribution.senderName;
+            if (attribution.deletedByName) current.deletedByName = attribution.deletedByName;
+          });
+          await ctx.chat.sendMessage(`${title}\n${attribution.text}\n${content}${row.hasMedia && !row.media && row.body ? "\nMedia unavailable." : ""}`);
           archive.patch(ctx.groupId, row.id, current => { current.reposts[kind].textSent = true; });
         }
         if (row.media && !previous.mediaSent) {

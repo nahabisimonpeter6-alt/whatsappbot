@@ -78,16 +78,59 @@ test("a new membership invalidates pending link removals and old warning undo", 
 
 test("user-deleted text is automatically reposted once without a command", async t => {
   const f = setup(t);
+  f.client.getContactById = async () => ({ name: "Sarah" });
   const original = f.message("Meeting starts at nine");
   await f.controller.handleMessage(original);
-  const revoked = { ...original, body: "", type: "revoked", protocolMessageKey: { $1: original.id._serialized } };
+  const revoked = { ...original, body: "", type: "revoked", protocolMessageKey: { $1: original.id._serialized }, _data: { revokeSender: { _serialized: "300@lid" } } };
   f.controller.handleRevocation(revoked);
   await f.controller.recovery.drain();
   assert.equal(f.sent.filter(row => typeof row.text === "string" && row.text.includes("Deleted message recovered")).length, 1);
   assert.ok(f.sent.some(row => typeof row.text === "string" && row.text.includes("Meeting starts at nine")));
+  assert.match(f.sent[0].text, /From: Sarah\nOriginal sender: Sarah/);
+  assert.doesNotMatch(f.sent[0].text, /300@lid/);
   f.controller.handleRevocation(revoked);
   await f.controller.recovery.drain();
   assert.equal(f.sent.filter(row => typeof row.text === "string" && row.text.includes("Deleted message recovered")).length, 1);
+});
+
+test("an admin deletion names the deleting admin separately from the author, including manual retrieval", async t => {
+  const f = setup(t);
+  f.client.getContactById = async id => ({ pushname: id === "200@c.us" ? "Peter the admin" : "Sarah" });
+  const original = f.message("Meeting at nine");
+  await f.controller.handleMessage(original);
+  f.controller.handleRevocation({ ...original, type: "revoked", body: "", _data: { revokeSender: { user: "200", server: "c.us" } } });
+  await f.controller.recovery.drain();
+  assert.match(f.sent.at(-1).text, /From: Peter the admin\nOriginal sender: Sarah/);
+  const row = f.controller.archive.get(original.from, original.id._serialized);
+  assert.equal(row.deletedBy, "200@c.us");
+  assert.equal(row.deletedByName, "Peter the admin");
+  await f.controller.handleMessage(f.message(`.retrieve ${row.id}`, { author: "200@c.us" }));
+  assert.match(f.sent.at(-1).text, /From: Peter the admin\nOriginal sender: Sarah/);
+});
+
+test("missing deletion metadata is not attributed to the original sender, and saved names survive failed lookups", async t => {
+  const f = setup(t);
+  f.client.getContactById = async () => { throw new Error("Contact unavailable"); };
+  const original = f.message("Saved content", { _data: { notifyName: "Sarah\nJones" } });
+  await f.controller.handleMessage(original);
+  f.controller.handleRevocation({ ...original, type: "revoked", body: "", _data: {} });
+  await f.controller.recovery.drain();
+  assert.match(f.sent.at(-1).text, /From: Unknown \(WhatsApp did not identify/);
+  assert.match(f.sent.at(-1).text, /Original sender: Sarah Jones/);
+  assert.doesNotMatch(f.sent.at(-1).text, /From: Sarah/);
+});
+
+test("names resolve across phone and LID aliases when direct contact lookup fails", async t => {
+  const f = setup(t);
+  f.client.getContactById = async id => {
+    if (id.endsWith("@lid")) throw new Error("LID lookup unavailable");
+    return { name: "Sarah (saved contact)" };
+  };
+  const original = f.message("Alias test");
+  await f.controller.handleMessage(original);
+  f.controller.handleRevocation({ ...original, type: "revoked", body: "", _data: { revokeSender: "300@lid" } });
+  await f.controller.recovery.drain();
+  assert.match(f.sent.at(-1).text, /From: Sarah \(saved contact\)\nOriginal sender: Sarah \(saved contact\)/);
 });
 
 test("view-once media is automatically redisplayed as ordinary media once", async t => {
