@@ -39,11 +39,14 @@ test("only complete exact FLAG or OK labels are accepted, with whitespace allowe
   assert.equal(await incomplete.classify("Test"), "OK");
 });
 
-test("missing keys, provider errors, refusals, and oversized messages keep the message", async () => {
+test("missing keys use local checks while provider errors, refusals, and oversized messages keep the message", async () => {
   let calls = 0;
   const missing = createContentClassifier({ apiKey: "", logger, fetchImpl: () => { calls++; } });
-  assert.equal(await missing.classify("f*ck you"), "OK");
-  assert.equal(missing.status().configured, false);
+  assert.equal(await missing.classify("f*ck you"), "FLAG");
+  assert.equal(await missing.classify("what does f*ck mean?"), "OK");
+  assert.equal(missing.status().configured, true);
+  assert.equal(missing.status().apiConfigured, false);
+  assert.equal(missing.status().mode, "local");
   assert.equal(calls, 0);
   for (const fetchImpl of [async () => ({ ok: false, status: 401 }), async () => { throw new Error("private response must not be logged"); },
     async () => ({ ok: true, json: async () => { throw new Error("invalid JSON"); } }),

@@ -41,13 +41,27 @@ test("admins enable the filter, test exact labels, see status/help, and disable 
   await f.command(".filter off"); assert.equal(f.storage.get("1000@g.us").contentModeration, false);
 });
 
-test("ordinary members and moderators cannot configure the filter, and no key is reported honestly", async t => {
+test("ordinary members and moderators cannot configure the filter, and an unavailable classifier is reported honestly", async t => {
   const f = setup(t, undefined, { configured: false });
-  await f.command(".filter on"); assert.match(f.sent.at(-1).text, /OPENAI_API_KEY/);
+  await f.command(".filter on"); assert.match(f.sent.at(-1).text, /classifier is unavailable/);
   assert.equal(f.storage.get("1000@g.us").contentModeration, false);
   await f.controller.handleMessage(f.message(".filter on")); assert.match(f.sent.at(-1).text, /Admins only/);
   await f.command(".mod add 400@c.us");
   await f.controller.handleMessage(f.message(".filter on", "400@c.us")); assert.match(f.sent.at(-1).text, /Admins only/);
+});
+
+test("filter status reports deletion blockers and the last failed FLAG deletion", async t => {
+  const f = setup(t); await f.command(".filter on");
+  f.chat.participants[0].isAdmin = false;
+  await f.send("f*ck you");
+  await f.command(".filter status");
+  assert.match(f.sent.at(-1).text, /Last flagged action: failed: The bot must be a group admin/);
+  assert.match(f.sent.at(-1).text, /Make the linked bot account a group admin/);
+  f.storage.update("1000@g.us", group => { group.dryRun = true; group.approval = "destructive"; group.disabledCommands = ["delete"]; });
+  await f.command(".filter status");
+  assert.match(f.sent.at(-1).text, /Dry-run is on/);
+  assert.match(f.sent.at(-1).text, /need approval/);
+  assert.match(f.sent.at(-1).text, /Deletion is disabled/);
 });
 
 test("FLAG deletes once through moderation without link warnings or automatic recovery", async t => {

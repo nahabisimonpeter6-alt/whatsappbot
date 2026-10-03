@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
+const { classifyLocalContent } = require("./local-content-classifier");
 const POLICY = fs.readFileSync(path.join(__dirname, "content-policy.txt"), "utf8").trim();
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const MAX_TEXT_LENGTH = 20000;
@@ -19,7 +20,8 @@ function createContentClassifier({ apiKey = process.env.OPENAI_API_KEY || "", mo
 
   async function classify(input) {
     const text = String(input ?? "");
-    if (!apiKey || !text.trim()) return "OK";
+    if (!text.trim()) return "OK";
+    if (!apiKey) return classifyLocalContent(text);
     if (text.length > MAX_TEXT_LENGTH) return fail("message too long for configured classifier");
     const key = createHash("sha256").update(text).digest("hex");
     const saved = cache.get(key);
@@ -60,7 +62,8 @@ function createContentClassifier({ apiKey = process.env.OPENAI_API_KEY || "", mo
     return job;
   }
 
-  return { classify, status: () => ({ configured: !!apiKey, model, lastError, active }) };
+  return { classify, status: () => ({ configured: true, apiConfigured: !!apiKey, mode: apiKey ? "openai" : "local",
+    model: apiKey ? model : "built-in conservative checks", lastError, active }) };
 }
 
 module.exports = { createContentClassifier, POLICY, DEFAULT_MODEL, MAX_TEXT_LENGTH };
