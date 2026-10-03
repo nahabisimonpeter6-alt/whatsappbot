@@ -3,6 +3,7 @@ const { raw } = require("./core-commands");
 const { messageId } = require("./message-archive");
 const { recoveryAttribution } = require("./recovery-attribution");
 const { containsLink } = require("./links");
+const { sendRecovery } = require("./recovery-send");
 
 function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = media => {
   const { MessageMedia } = require("whatsapp-web.js");
@@ -54,10 +55,10 @@ function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = me
       // This explicit admin action always publishes in the selected group,
       // including when the admin invokes it through private group control.
       const send = name === "restorelink" ? (content, options) => ctx.chat.sendMessage(content, options) : ctx.reply;
-      await send(`${name === "restorelink" ? "🔗 Link restored to the group by an admin" : "📥 Saved copy"}\n${attribution.text}\n${row.body || `[${row.type}]`}${row.hasMedia && !row.media ? `\nMedia unavailable: ${row.mediaStatus}.` : ""}`);
       // A recovered copy is a new ordinary attachment, even when its source
       // was view-once. Never carry the source's view-once sending flag forward.
-      if (row.media) await send(makeMedia(row.media), { isViewOnce: false });
+      await sendRecovery({ send, makeMedia, media: row.media,
+        text: `${name === "restorelink" ? "🔗 Link restored to the group by an admin" : "📥 Saved copy"}\n${attribution.text}\n${row.body || `[${row.type}]`}${row.hasMedia && !row.media ? `\nMedia unavailable: ${row.mediaStatus}.` : ""}` });
       if (name === "restorelink" && ctx.isDM) await ctx.reply(`✅ Link ${row.id} restored to ${ctx.chat.name || "the selected group"}.`);
       return { archivedId: row.id, ...(name === "restorelink" ? { destination: ctx.groupId } : {}) };
     }

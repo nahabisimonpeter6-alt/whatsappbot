@@ -68,11 +68,12 @@ test("saved group replay claims stop duplicate commands after a controller resta
 test("deleting a previously redisplayed view-once photo does not post it again", async t => {
   const f = setup(t), original = f.photo();
   await f.controller.handleMessage(original); await f.drain();
-  assert.equal(f.sent.length, 2); // One attribution message and one photo.
+  assert.equal(f.sent.length, 1); // The attribution is the photo caption.
   f.controller.handleRevocation({ ...original, type: "revoked", body: "" }, original);
   await f.drain();
   assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
-  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 1);
+  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 0);
+  assert.match(f.sent[0].options.caption, /Saved photo caption/);
 });
 
 test("simultaneous view-once and deletion events share one delivery", async t => {
@@ -82,11 +83,12 @@ test("simultaneous view-once and deletion events share one delivery", async t =>
   f.controller.handleRevocation({ ...original, type: "revoked", body: "" }, original);
   finish({ mimetype: "image/png", data: "aW1hZ2U=" }); await f.drain();
   assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
-  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 1);
+  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 0);
 });
 
 test("cross-reason recovery retries only missing media after a partial failure", async t => {
-  const f = setup(t), original = f.photo(); const send = f.chat.sendMessage; let fail = true;
+  const f = setup(t), original = f.photo(); original.body = "Long caption ".repeat(120);
+  const send = f.chat.sendMessage; let fail = true;
   f.chat.sendMessage = async (text, options) => {
     if (text?.mimetype && fail) { fail = false; throw new Error("Media send failed"); }
     return send(text, options);

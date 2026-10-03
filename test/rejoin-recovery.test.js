@@ -13,7 +13,7 @@ function setup(t, archive) {
   f.controller.start(); t.after(() => f.controller.stop());
   f.message = (body, extra = {}) => ({ body, author: "300@lid", from: "1000@g.us", type: "chat", fromMe: false,
     id: { _serialized: `incoming-${++number}`, remote: "1000@g.us" }, getChat: async () => f.chat,
-    reply: async text => f.sent.push({ text }), ...extra });
+    reply: async (text, _chatId, options) => f.sent.push(options ? { text, options } : { text }), ...extra });
   f.join = (id, recipient = "300@c.us") => f.controller.notification("member_joined", {
     chatId: "1000@g.us", recipientIds: [recipient], id: { _serialized: id }, getChat: async () => f.chat
   });
@@ -178,7 +178,7 @@ test("a withheld placeholder can later receive available media and repost it as 
   assert.equal(row.reposts.viewonce.status, "sent");
   assert.equal(f.sent.filter(row => typeof row.text === "string").length, 1);
   assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
-  assert.deepEqual(f.sent.find(row => row.text?.mimetype).options, { isViewOnce: false });
+  assert.equal(f.sent.find(row => row.text?.mimetype).options.isViewOnce, false);
 });
 
 test("media arriving during the unavailable notice is posted after the notice finishes", async t => {
@@ -231,7 +231,8 @@ test("user-deleted media is recovered after its background download finishes", a
   release({ mimetype: "image/png", data: Buffer.from("deleted picture").toString("base64") });
   await f.controller.recovery.drain();
   assert.equal(f.sent.filter(row => row.text?.mimetype === "image/png").length, 1);
-  assert.ok(f.sent.some(row => typeof row.text === "string" && row.text.includes("Caption")));
+  assert.equal(f.sent.length, 1);
+  assert.match(f.sent[0].options.caption, /Caption/);
 });
 
 test("automatic recovery does not restore moderated links or view-once captions containing links", async t => {
@@ -267,8 +268,9 @@ test("a failed automatic media send retries without reposting the header twice",
   const original = f.message("", { type: "image", _data: { isViewOnce: true }, downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) });
   await f.controller.handleMessage(original); await f.controller.recovery.drain();
   await f.controller.handleMessage(original); await f.controller.recovery.drain();
-  assert.equal(f.sent.filter(row => typeof row.text === "string" && row.text.includes("redisplayed")).length, 1);
+  assert.equal(f.sent.filter(row => typeof row.text === "string").length, 0);
   assert.equal(f.sent.filter(row => row.text?.mimetype).length, 1);
+  assert.match(f.sent.at(-1).options.caption, /redisplayed/);
 });
 
 test("unavailable view-once media reports its limitation once instead of pretending to send an image", async t => {
@@ -306,4 +308,49 @@ test("saved repost records prevent duplicate delivery after restart", async t =>
   next.controller.handleRevocation({ ...original, body: "", type: "revoked" });
   await next.controller.recovery.drain();
   assert.equal(next.sent.length, 0);
+});
+
+test("manual v and retrieve send one photo with its caption and correct names", async t => {
+  const f = setup(t); f.controller.stop();
+  f.client.getContactById = async id => ({ name: id === "200@c.us" ? "Peter" : "Sarah" });
+  const original = f.message("Original photo caption", { type: "image", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) });
+  await f.controller.handleMessage(original);
+  const row = f.controller.archive.get(original.from, original.id._serialized);
+  await f.controller.handleMessage(f.message(`.v ${row.id}`, { author: "200@c.us" }));
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].text.mimetype, "image/png");
+  assert.equal(f.sent[0].options.isViewOnce, false);
+  assert.match(f.sent[0].options.caption, /From: Sarah\nOriginal photo caption/);
+  f.controller.handleRevocation({ ...original, type: "revoked", body: "", _data: { revokeSender: "200@c.us" } }, original);
+  await f.controller.handleMessage(f.message(`.retrieve ${row.id}`, { author: "200@c.us" }));
+  assert.equal(f.sent.length, 2);
+  assert.match(f.sent[1].options.caption, /From: Peter\nOriginal sender: Sarah\nOriginal photo caption/);
+});
+
+test("long captions remain complete and a replay does not send either part again", async t => {
+  const f = setup(t), text = "Long saved caption ".repeat(100);
+  const original = f.message(text, { type: "video", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "video/mp4", data: "dmlkZW8=" }) });
+  await f.controller.handleMessage(original); await f.controller.recovery.drain();
+  assert.equal(f.sent.length, 2);
+  assert.ok(f.sent[0].text.endsWith(text));
+  assert.equal(f.sent[1].text.mimetype, "video/mp4");
+  await f.controller.handleMessage(original); await f.controller.recovery.drain();
+  assert.equal(f.sent.length, 2);
+});
+
+test("an earlier separately sent header does not become a repeated media caption", async t => {
+  const f = setup(t); f.controller.stop();
+  const original = f.message("Photo", { type: "image", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "image/png", data: "aW1hZ2U=" }) });
+  await f.controller.handleMessage(original);
+  const row = f.controller.archive.get(original.from, original.id._serialized);
+  await f.controller.archive.waitFor(row.id);
+  f.controller.archive.patch(original.from, row.id, saved => { saved.reposts = { viewonce: { status: "failed", textSent: true, mediaSent: false } }; });
+  f.controller.start();
+  f.controller.recovery.schedule(original.from, row.id, "viewonce"); await f.controller.recovery.drain();
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].text.mimetype, "image/png");
+  assert.deepEqual(f.sent[0].options, { isViewOnce: false });
 });

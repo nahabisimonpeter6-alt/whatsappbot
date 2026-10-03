@@ -2,6 +2,7 @@ const { makeMessageMedia } = require("./media");
 const { containsLink } = require("./links");
 const { messageId } = require("./message-archive");
 const { recoveryAttribution } = require("./recovery-attribution");
+const { sendRecovery } = require("./recovery-send");
 
 function installAutoRecovery(engine, { client, storage, archive, logger = console, isActive, makeMedia = makeMessageMedia, allowsContentRepost = async () => true }) {
   const jobs = new Set();
@@ -41,19 +42,17 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
       const title = kind === "deleted" ? row.body || row.media ? "📥 Deleted message recovered" : "📥 Deleted message unavailable" : row.media ? "📷 View-once media redisplayed" : "📷 View-once media unavailable";
       const content = row.body || (row.media ? `[${row.type}]` : row.mediaUnavailableReason || "The original media was not made available to the bot and could not be recovered.");
       try {
-        if (!previous.textSent) {
-          const attribution = await recoveryAttribution(client, row, kind);
+        const attribution = !previous.textSent ? await recoveryAttribution(client, row, kind) : null;
+        if (attribution) {
           archive.patch(ctx.groupId, row.id, current => {
             current.senderName = attribution.senderName;
             if (attribution.deletedByName) current.deletedByName = attribution.deletedByName;
           });
-          await ctx.chat.sendMessage(`${title}\n${attribution.text}\n${content}${row.hasMedia && !row.media && row.body ? "\nMedia unavailable." : ""}`);
-          archive.patch(ctx.groupId, row.id, current => { current.reposts[kind].textSent = true; });
         }
-        if (row.media && !previous.mediaSent) {
-          await ctx.chat.sendMessage(makeMedia(row.media), { isViewOnce: false });
-          archive.patch(ctx.groupId, row.id, current => { current.reposts[kind].mediaSent = true; });
-        }
+        await sendRecovery({ send: (content, options) => ctx.chat.sendMessage(content, options), makeMedia, media: row.media,
+          text: attribution ? `${title}\n${attribution.text}\n${content}${row.hasMedia && !row.media && row.body ? "\nMedia unavailable." : ""}` : "",
+          textSent: previous.textSent, mediaSent: previous.mediaSent,
+          markDelivered: parts => archive.patch(ctx.groupId, row.id, current => { Object.assign(current.reposts[kind], parts); }) });
         archive.patch(ctx.groupId, row.id, current => { current.reposts[kind].status = row.hasMedia && !row.media ? "unavailable" : "sent"; });
         return { archivedId: row.id };
       } catch (error) {

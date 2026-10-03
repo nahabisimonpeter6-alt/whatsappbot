@@ -360,13 +360,15 @@ test("v lists view-once records and retrieves normal media by latest, ID, or rep
     assert.equal(f.sent.at(-1).text.mimetype, "image/png");
     assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "saved picture");
     assert.equal(f.sent.at(-1).text.isViewOnce, undefined);
-    assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
+    assert.equal(f.sent.at(-1).options.isViewOnce, false);
+    assert.match(f.sent.at(-1).options.caption, /Saved copy/);
   }
   const request = f.message(".v");
   request.hasQuotedMsg = true; request.getQuotedMessage = async () => incoming;
   await f.controller.handleMessage(request);
   assert.equal(f.sent.at(-1).text.mimetype, "image/png");
-  assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
+  assert.equal(f.sent.at(-1).options.isViewOnce, false);
+  assert.match(f.sent.at(-1).options.caption, /Saved copy/);
   assert.ok(f.storage.get("1000@g.us").audit.filter(row => row.command === "viewonce").every(row => row.result === "success"));
 });
 
@@ -382,7 +384,8 @@ test("v reposts saved view-once video with repeatable viewing in private admin c
   await command(f, `.v ${saved.id}`, "200@c.us", true);
   assert.equal(f.sent.at(-1).text.mimetype, "video/mp4");
   assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "saved video");
-  assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
+  assert.equal(f.sent.at(-1).options.isViewOnce, false);
+  assert.match(f.sent.at(-1).options.caption, /Saved copy/);
 });
 
 test("v retains admin permissions and explains when WhatsApp did not supply a file", async t => {
