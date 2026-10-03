@@ -7,7 +7,7 @@ const { createMessageArchive } = require("./message-archive");
 const { recoverMissedAuthSync } = require("./whatsapp-compat");
 const { downloadAvailableMedia } = require("./media");
 
-function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, startupTimeoutMs = 300000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
+function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, startupTimeoutMs = 300000, browserCheckIntervalMs = 1000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
   const app = express();
   const controller = createController({ client, storage: automationStore, prefix, logger, now, ownerNumbers, revoke, archive, makeMedia });
   let ready = false;
@@ -15,6 +15,29 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   let stopping = false;
   let stopPromise;
   let startupTimer;
+  const watched = new WeakSet();
+
+  function browserAvailable() {
+    return client.pupBrowser?.connected !== false && !client.pupPage?.isClosed?.();
+  }
+
+  function monitorBrowser() {
+    if (stopping) return;
+    const browser = client.pupBrowser, page = client.pupPage;
+    if (browser?.on && !watched.has(browser)) {
+      watched.add(browser);
+      browser.on("disconnected", () => fail("[WHATSAPP] browser disconnected:", new Error("Chromium connection was lost.")));
+    }
+    if (page?.on && !watched.has(page)) {
+      watched.add(page);
+      page.on("close", () => fail("[WHATSAPP] browser page closed:", new Error("WhatsApp Web page closed.")));
+      page.on("error", error => fail("[WHATSAPP] browser page crashed:", error));
+    }
+    // Also catch a browser that died before its listeners could be attached.
+    if (!browserAvailable()) fail("[WHATSAPP] browser unavailable:", new Error("WhatsApp Web browser is no longer running."));
+  }
+  const browserTimer = setInterval(monitorBrowser, browserCheckIntervalMs);
+  browserTimer.unref();
 
   function armStartupWatchdog() {
     if (startupTimer || ready || stopping) return;
@@ -30,7 +53,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   app.get("/", (_req, res) => res.status(200).send("WhatsApp bot service"));
   app.get("/live", (_req, res) => res.status(stopping ? 503 : 200).json({ ok: !stopping }));
   app.get("/health", (_req, res) => {
-    const ok = ready && !stopping;
+    const ok = ready && !stopping && browserAvailable();
     res.status(ok ? 200 : 503).json({ ok, ready: ok });
   });
 
@@ -41,6 +64,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
     stopping = true;
     ready = false;
     clearStartupWatchdog();
+    clearInterval(browserTimer);
     controller.stop();
     stopPromise = (async () => {
       const watchdog = setTimeout(() => onExit(code), shutdownTimeoutMs);
@@ -66,6 +90,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
 
   server.on("error", error => fail("[HTTP] failed:", error));
   client.on("qr", qr => {
+    monitorBrowser();
     if (stopping) return;
     // Initial pairing needs a human to scan the QR; allow them time to do so.
     clearStartupWatchdog();
@@ -79,6 +104,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
     logger.log("[WHATSAPP] authenticated");
   });
   client.on("ready", () => {
+    monitorBrowser();
     if (stopping) return;
     ready = true;
     clearStartupWatchdog();
@@ -116,6 +142,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
     if (stopping) return;
     armStartupWatchdog();
     await client.initialize();
+    monitorBrowser();
     if (!stopping && !ready) await recoverMissedAuthSync(client, () => authenticated);
   }).catch(error => {
     fail("[WHATSAPP] initialization failed:", error);

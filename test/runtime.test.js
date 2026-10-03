@@ -78,6 +78,53 @@ test("successful readiness cancels the startup watchdog", async t => {
   assert.deepEqual(f.exits, []);
 });
 
+test("a browser disconnect after ready stops the runtime instead of leaving stale readiness", async t => {
+  const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
+  f.client.pupBrowser = new EventEmitter(); f.client.pupBrowser.connected = true;
+  f.client.emit("ready");
+  f.client.pupBrowser.connected = false;
+  f.client.pupBrowser.emit("disconnected");
+  await f.runtime.stop();
+  assert.deepEqual(f.exits, [1]);
+  assert.equal(f.destroyed(), 1);
+  assert.equal(f.runtime.server.listening, false);
+});
+
+for (const event of ["close", "error"]) {
+  test(`WhatsApp page ${event} stops the runtime for restart`, async t => {
+    const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
+    f.client.pupPage = new EventEmitter(); f.client.pupPage.isClosed = () => false;
+    f.client.emit("ready");
+    f.client.pupPage.emit(event, new Error("Page crashed"));
+    await f.runtime.stop();
+    assert.deepEqual(f.exits, [1]);
+    assert.equal(f.destroyed(), 1);
+  });
+}
+
+test("health rejects a dead browser immediately and the monitor catches missed disconnect events", async t => {
+  const f = fixture(undefined, { browserCheckIntervalMs: 100 });
+  t.after(() => f.runtime.stop()); const base = await listen(f); await f.runtime.initialization;
+  f.client.pupBrowser = new EventEmitter(); f.client.pupBrowser.connected = true;
+  f.client.emit("ready");
+  f.client.pupBrowser.connected = false;
+  const response = await fetch(`${base}/health`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, ready: false });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  await f.runtime.stop();
+  assert.deepEqual(f.exits, [1]);
+});
+
+test("expected browser shutdown preserves a successful exit code", async t => {
+  const f = fixture(); t.after(() => f.runtime.stop()); await listen(f);
+  f.client.pupBrowser = new EventEmitter(); f.client.pupBrowser.connected = true;
+  f.client.emit("ready");
+  f.client.destroy = async () => f.client.pupBrowser.emit("disconnected");
+  await f.runtime.stop(0);
+  assert.deepEqual(f.exits, [0]);
+});
+
 test("runtime recovers readiness when a paired session was synced before listener registration", async t => {
   let release;
   const f = fixture(() => new Promise(resolve => { release = resolve; })); t.after(() => f.runtime.stop()); await listen(f);

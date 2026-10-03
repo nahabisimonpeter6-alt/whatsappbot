@@ -14,6 +14,8 @@ npm start
 
 Scan the terminal QR code using WhatsApp **Linked devices**. Add the bot to your group and make it an administrator. The account must stay paired for moderation to work. Sessions are stored in `data/session` locally and excluded from Git.
 
+On a Linux desktop with systemd, stop any foreground bot first and run `npm run start:local` to install and start a background user service. It starts at login and restarts after failures, including a stopped Chromium browser. Follow logs or scan a pairing QR with `journalctl --user -u whatsapp-bot.service -f`. Use `systemctl --user restart whatsapp-bot`, `systemctl --user stop whatsapp-bot`, or `systemctl --user status whatsapp-bot` to manage it. Closing the terminal leaves the service running; keep the PC powered on and awake. The installer copies any explicitly set bot environment variables into a private service file; supply your custom variables again when reinstalling. Stop this service before running `npm start` or moving the account to cloud hosting.
+
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP listening port |
@@ -302,7 +304,7 @@ The included `railway.json` configures Docker deployment, one replica, Serverles
 | `/health` | HTTP 200 with `ok: true, ready: true` only when WhatsApp is connected; otherwise HTTP 503 |
 | `/` | Basic service response; does not indicate WhatsApp readiness |
 
-Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. A startup watchdog also exits if WhatsApp has not become ready within five minutes. It pauses while a QR needs scanning and resumes after authentication; readiness cancels it. Set `WHATSAPP_STARTUP_TIMEOUT_MS` to an integer between 1000 and 3600000 to change the wait. Startup also checks whether a restored session finished syncing before the library registered its listener and recovers the missing readiness callback. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
+Initialization failures, authentication failures, WhatsApp disconnects, Chromium disconnections, and browser-page crashes or closures exit with status 1 so Railway can restart the process. A startup watchdog also exits if WhatsApp has not become ready within five minutes. It pauses while a QR needs scanning and resumes after authentication; readiness cancels it. Set `WHATSAPP_STARTUP_TIMEOUT_MS` to an integer between 1000 and 3600000 to change the wait. Startup also checks whether a restored session finished syncing before the library registered its listener and recovers the missing readiness callback. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
 
 ## Verification
 

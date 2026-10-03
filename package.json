@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node src/bot.js",
+    "start:local": "node scripts/install-local-service.js",
     "test": "node --test"
   },
   "dependencies": {
