@@ -57,6 +57,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Moderation: ${prefix}warn USER reason, ${prefix}unwarn USER, ${prefix}d (reply to a message), ${prefix}mute USER MINUTES, ${prefix}unmute USER`,
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
+      `Admin link recovery: ${prefix}restorelink list shows links deleted by the bot; ${prefix}restorelink ID restores one to the group chat; ${prefix}restorelink restores the latest. Also sends to the selected group when used in private control.`,
       `View-once recovery: ${prefix}viewonce list, then ${prefix}viewonce ID, or reply to the media with ${prefix}viewonce. Available copies are reposted as normal media. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
       `Automatic recovery: on by default. Admins: ${prefix}set repostdeleted on|off, ${prefix}set repostviewonce on|off. Rejoined members start link warnings from zero.`,
       `Activities: ${prefix}activities week. Any group admin can add games or events: ${prefix}activity add friday 20:00 | Truth or Dare. More: ${prefix}activity help`,

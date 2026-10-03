@@ -225,12 +225,17 @@ WhatsApp currently delivers some incoming view-once images as `ciphertext` place
 
 Admins can send `.set repostdeleted on|off` and `.set repostviewonce on|off` to control each behavior. Automatic reposts use the shared `repost` command, so panic, autopilot, dry-run, disabled commands, rate limits and approval mode apply. Approval `all` proposes reposting before sending. Per-message delivery records suppress duplicate notifications and survive normal restarts; partial sends retain progress so retrying does not repeat a saved header. A crash between an outgoing message and saving its progress cannot guarantee exactly-once delivery. Archived copies remain available through the admin commands below.
 
+Current group admins and configured owners can explicitly restore bot-deleted links to the group chat with `.restorelink ID`. `.restorelink list` lists matching archived links and their IDs; `.restorelink` or `.restorelink last` restores the latest one. This also posts into the selected group when invoked through private admin control; the private chat receives a confirmation. The command supports a quoted archived message, rejects records from other groups and records that are not bot-deleted links, and obeys dry-run and command permissions. Restoring a link keeps its original warning count. Automatic recovery continues to exclude moderated links. The saved copy must still exist in the 24-hour archive. The new command is included in `.help`.
+
 From another group admin account, send `.help` for the recovery commands:
 
 ```text
 .deleted
 .retrieve ID
 .retrieve
+.restorelink list
+.restorelink ID
+.restorelink
 .viewonce list
 .viewonce ID
 ```

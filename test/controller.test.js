@@ -228,6 +228,8 @@ test("help exposes moderation and automation commands to users", async t => {
   assert.match(f.sent.at(-1).text, /antilink on\|off\|status/);
   assert.match(f.sent.at(-1).text, /warn USER/);
   assert.match(f.sent.at(-1).text, /retrieve ID/);
+  assert.match(f.sent.at(-1).text, /restorelink list/);
+  assert.match(f.sent.at(-1).text, /restorelink ID restores one to the group chat/);
   assert.match(f.sent.at(-1).text, /viewonce list/);
 });
 
@@ -245,6 +247,69 @@ test("admins recover bot-deleted links; members and moderators cannot read the a
   assert.ok(f.sent.at(-1).text.includes(saved.id));
   await command(f, `.retrieve ${saved.id}`);
   assert.match(f.sent.at(-1).text, /https:\/\/example.com Important information/);
+});
+
+test("restorelink restores the chosen or latest bot-deleted link into the group without changing offences", async t => {
+  const f = setup(t);
+  await command(f, "https://example.com First link", "300@lid");
+  const first = f.controller.archive.list("1000@g.us", row => row.deleted)[0];
+  await command(f, "https://example.org Second link", "300@lid");
+  await command(f, ".restorelink list");
+  assert.match(f.sent.at(-1).text, new RegExp(first.id));
+  assert.match(f.sent.at(-1).text, /Restore to group: \.restorelink ID/);
+  await command(f, `.restorelink ${first.id}`);
+  assert.match(f.sent.at(-1).text, /Link restored to the group by an admin/);
+  assert.match(f.sent.at(-1).text, /https:\/\/example.com First link/);
+  assert.equal(first.deletedBy, "100@c.us");
+  await command(f, ".restorelink");
+  assert.match(f.sent.at(-1).text, /https:\/\/example.org Second link/);
+  assert.equal(f.storage.get("1000@g.us").linkWarnings["300@lid"], 2);
+  assert.equal(f.actions.filter(row => row.type === "delete").length, 2);
+  assert.equal(f.storage.get("1000@g.us").audit.filter(row => row.command === "restorelink" && row.result === "success").length, 3);
+});
+
+test("private admin restorelink sends the link to the selected group and only confirms in private", async t => {
+  const f = setup(t);
+  await command(f, "https://example.com Group link", "300@lid");
+  const saved = f.controller.archive.list("1000@g.us", row => row.deleted)[0];
+  const posted = [];
+  f.chat.sendMessage = async content => posted.push(content);
+  await command(f, ".use 1000@g.us", "200@c.us", true);
+  await command(f, `.restorelink ${saved.id}`, "200@c.us", true);
+  assert.equal(posted.length, 1);
+  assert.match(posted[0], /https:\/\/example.com Group link/);
+  assert.match(f.sent.at(-1).text, /restored to Test group/);
+  assert.doesNotMatch(f.sent.at(-1).text, /https:\/\/example.com/);
+});
+
+test("restorelink enforces admin permissions, matching archived records and dry run", async t => {
+  const f = setup(t);
+  await command(f, "https://example.com Moderated link", "300@lid");
+  const saved = f.controller.archive.list("1000@g.us", row => row.deleted)[0];
+  await command(f, ".mod add 400@c.us");
+  for (const actor of ["300@lid", "400@c.us"]) {
+    await command(f, `.restorelink ${saved.id}`, actor);
+    assert.match(f.sent.at(-1).text, /Admins only/);
+  }
+  const ordinary = f.message("Ordinary deleted message", "300@lid");
+  await f.controller.handleMessage(ordinary);
+  f.controller.handleRevocation({ ...ordinary, type: "revoked", body: "" });
+  const userDeleted = f.controller.archive.get("1000@g.us", ordinary.id._serialized);
+  await command(f, `.restorelink ${userDeleted.id}`);
+  assert.match(f.sent.at(-1).text, /not a link deleted by the bot/);
+  const foreign = { ...f.message("https://example.net Foreign link", "300@lid"), from: "2000@g.us", id: { _serialized: "foreign-link" } };
+  f.controller.archive.observe(foreign);
+  f.controller.archive.suppress(foreign);
+  f.controller.archive.revoked(foreign, foreign);
+  const foreignRow = f.controller.archive.get("2000@g.us", foreign.id._serialized);
+  await command(f, `.restorelink ${foreignRow.id}`);
+  assert.match(f.sent.at(-1).text, /No saved bot-deleted link found/);
+  const posted = [];
+  f.chat.sendMessage = async content => posted.push(content);
+  await command(f, ".set dryrun on");
+  await command(f, `.restorelink ${saved.id}`);
+  assert.match(f.sent.at(-1).text, /Dry run: restorelink/);
+  assert.equal(posted.length, 0);
 });
 
 test("private admin recovery delivers the saved message to that admin's chat", async t => {

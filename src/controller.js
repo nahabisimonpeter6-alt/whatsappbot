@@ -30,7 +30,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
       // the revoke call returns. Recovery must not undo moderation.
       recovery.suppress(message);
       await (revoke || revokeForEveryone)(sender, message);
-      handleRevocation(message, message);
+      handleRevocation({ ...message, _data: { ...message._data, revokeSender: sender.info?.wid } }, message);
     }
   };
   const engine = createCommandEngine(options);
