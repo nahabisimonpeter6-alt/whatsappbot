@@ -8,13 +8,13 @@ const { createController } = require("../src/controller");
 const { createAutomationStore } = require("../src/automation-store");
 
 function setup(t, storage) {
-  const f = fixture();
+  const f = fixture(); let messageNumber = 0;
   if (storage) f.storage = f.options.storage = storage;
   f.controller = createController({ ...f.options, revoke: async (_client, message) => f.actions.push({ type: "delete", id: message.id._serialized }) });
   t.after(() => f.controller.stop());
   f.message = (body, actor = "200@c.us", dm = false) => ({
     body, author: dm ? undefined : actor, from: dm ? actor : "1000@g.us", type: "chat", fromMe: false,
-    id: { _serialized: `message-${f.sent.length}`, remote: "1000@g.us" },
+    id: { _serialized: `message-${++messageNumber}`, remote: "1000@g.us" },
     getChat: async () => f.chat, reply: async (text, _chatId, options) => f.sent.push(options ? { text, options } : { text })
   });
   f.notification = (recipient, type = "add", id = `join-${recipient}`) => ({

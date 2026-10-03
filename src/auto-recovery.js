@@ -6,10 +6,20 @@ const { recoveryAttribution } = require("./recovery-attribution");
 function installAutoRecovery(engine, { client, storage, archive, logger = console, isActive, makeMedia = makeMessageMedia, allowsContentRepost = async () => true }) {
   const jobs = new Set();
   const pending = new Set();
-  const reschedule = new Set();
+  const reschedule = new Map();
   const moderated = new Set();
   const suppressed = row => row.moderated || moderated.has(`${row.groupId}:${row.sourceId}`);
-  const complete = (row, kind) => row.reposts?.[kind]?.status === "sent" && !(row.media && !row.reposts[kind].mediaSent);
+  // A view-once event and its later deletion refer to the same original. Share
+  // delivered parts across both reasons, including partial sends and restarts.
+  function delivery(row) {
+    const records = Object.values(row.reposts || {});
+    return { textSent: records.some(record => record.textSent), mediaSent: records.some(record => record.mediaSent),
+      sending: records.some(record => record.status === "sending"), unavailable: records.some(record => record.status === "unavailable") };
+  }
+  const complete = row => {
+    const sent = delivery(row);
+    return sent.textSent && (row.media ? sent.mediaSent : !row.hasMedia || sent.unavailable);
+  };
   engine.register({ name: "repost", description: "Automatically repost a saved deletion or view-once message", requiredRole: "admin", minimumRole: "admin", automationSafe: true, effect: true,
     run: async ctx => {
       const { archiveId, kind } = ctx.args;
@@ -18,12 +28,13 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
       const group = storage.get(ctx.groupId);
       if (!row || suppressed(row) || !group[kind === "deleted" ? "repostDeleted" : "repostViewOnce"]) return { skipped: true };
       if (kind === "deleted" && !row.deleted || kind === "viewonce" && !row.viewOnce) return { skipped: true };
-      if (complete(row, kind) || row.reposts?.[kind]?.status === "sending") return { alreadySent: true };
-      if (row.reposts?.[kind]?.status === "unavailable" && !row.media) return { alreadyReported: true };
+      const sent = delivery(row);
+      if (complete(row) || sent.sending) return { alreadySent: true };
+      if (sent.unavailable && !row.media) return { alreadyReported: true };
       if (!(await allowsContentRepost(row, ctx.chat))) return { skipped: true };
       if (containsLink(row.body) && group.rules.some(rule => rule.id === "builtin-links" && rule.enabled) &&
         !(await engine.permissions.protectedTarget(ctx.chat, ctx.groupId, row.sender))) return { skipped: true };
-      const previous = row.reposts?.[kind] || {};
+      const previous = { ...row.reposts?.[kind], textSent: sent.textSent, mediaSent: sent.mediaSent };
       archive.patch(ctx.groupId, row.id, current => {
         current.reposts ||= {}; current.reposts[kind] = { ...previous, status: "sending" };
       });
@@ -55,16 +66,19 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
   function schedule(groupId, id, kind) {
     if (!id || !isActive()) return;
     if (kind === "viewonce" && !archive.get(groupId, id)?.viewOnce) return;
-    const key = `${groupId}:${id}:${kind}`;
-    if (pending.has(key)) { reschedule.add(key); return; }
+    const key = `${groupId}:${id}`;
+    if (pending.has(key)) {
+      if (!reschedule.has(key)) reschedule.set(key, new Set());
+      reschedule.get(key).add(kind); return;
+    }
     pending.add(key);
     const job = (async () => {
       await archive.waitFor(id);
       if (!isActive()) return;
       const row = archive.get(groupId, id), group = storage.get(groupId);
       if (!row || suppressed(row) || kind === "viewonce" && !row.viewOnce || !group.autopilot || group.paused ||
-        !group[kind === "deleted" ? "repostDeleted" : "repostViewOnce"] || complete(row, kind)) return;
-      if (row.reposts?.[kind]?.status === "unavailable" && !row.media) return;
+        !group[kind === "deleted" ? "repostDeleted" : "repostViewOnce"] || complete(row)) return;
+      if (delivery(row).unavailable && !row.media) return;
       if (!(await allowsContentRepost(row))) return;
       await engine.executeCommand("repost", { groupId, actor: { type: "system", id: "automatic-recovery" },
         args: { archiveId: id, kind }, reply: text => client.sendMessage(groupId, text) });
@@ -72,7 +86,8 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
     jobs.add(job);
     void job.finally(() => {
       jobs.delete(job); pending.delete(key);
-      if (reschedule.delete(key)) schedule(groupId, id, kind);
+      const again = reschedule.get(key); reschedule.delete(key);
+      if (again) for (const reason of again) schedule(groupId, id, reason);
     });
   }
   function suppress(message) {

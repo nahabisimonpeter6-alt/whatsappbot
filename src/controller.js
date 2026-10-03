@@ -6,7 +6,7 @@ const { createModeration } = require("./moderation");
 const { createAutomations, agenda, selectedAgenda, localClock } = require("./automations");
 const { createRulesEngine } = require("./rules");
 const { publicError } = require("./permissions");
-const { createMessageArchive, unavailableViewOnce } = require("./message-archive");
+const { createMessageArchive, messageId, unavailableViewOnce } = require("./message-archive");
 const { installRecoveryCommands } = require("./recovery-commands");
 const { revokeForEveryone } = require("./revoke");
 const { installAutoRecovery } = require("./auto-recovery");
@@ -40,6 +40,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   let active = false, timer, ruleTicking = false;
   const delivered = new Map();
   const messages = new Map();
+  const handledMessages = new Map();
   const seenJoins = new Set();
 
   async function route(message) {
@@ -110,20 +111,49 @@ function createController({ client, storage, prefix = ".", logger = console, now
     if (message?.fromMe) return Promise.resolve();
     const archivedId = capture(message);
     const groupId = message?.from;
-    const command = invocation(String(message?.body || ""), prefix)?.name;
-    if (!groupId?.endsWith("@g.us") || engine.get(command)?.urgent) return processMessage(message);
-    // Keep rapid posts in order: a removal finishes before resolving the next
-    // message's membership, while panic/resume can still interrupt the queue.
-    const previous = messages.get(groupId) || Promise.resolve();
-    const running = previous.catch(() => {}).then(() => processMessage(message)).then(() => {
-      // Classify in the background so a slow provider cannot block link
-      // moderation or commands. Avoid redisplaying captions that were flagged.
+    const sourceId = messageId(message), replayKey = sourceId && `${groupId}:${sourceId}`;
+    let previous = replayKey && handledMessages.get(replayKey), archived;
+    if (previous && now().valueOf() - previous.at >= 86400000) {
+      handledMessages.delete(replayKey); previous = undefined;
+    }
+    try { archived = archivedId && archive.get(groupId, archivedId); }
+    catch (error) { logger.error("[CONTROL] Could not read message replay protection:", error); return Promise.resolve(); }
+    function postProcessing() {
+      // A repeated media event can enrich an earlier placeholder or retry an
+      // incomplete recovery, without rerunning commands or moderation rules.
       void contentFilter.schedule(message).then(verdict => {
         if (active && verdict !== "FLAG") recovery.schedule(groupId, archivedId, "viewonce");
       });
-    });
-    messages.set(groupId, running);
-    void running.finally(() => { if (messages.get(groupId) === running) messages.delete(groupId); }).catch(() => {});
+    }
+    if (previous || archived?.handled) {
+      const running = previous?.job || Promise.resolve();
+      return running.then(postProcessing);
+    }
+    // Claim before any asynchronous work: parallel deliveries must not each
+    // issue a reply, warning, or rule action. Group claims survive restarts for
+    // as long as the original archive record remains available.
+    if (archivedId) {
+      try { archive.patch(groupId, archivedId, row => { row.handled = true; }); }
+      catch (error) { logger.error("[CONTROL] Could not save message replay protection:", error); return Promise.resolve(); }
+    }
+    const command = invocation(String(message?.body || ""), prefix)?.name;
+    let running;
+    if (!groupId?.endsWith("@g.us") || engine.get(command)?.urgent) running = processMessage(message);
+    else {
+      // Keep rapid posts in order: a removal finishes before resolving the next
+      // message's membership, while panic/resume can still interrupt the queue.
+      const queued = messages.get(groupId) || Promise.resolve();
+      running = queued.catch(() => {}).then(() => processMessage(message)).then(postProcessing);
+      messages.set(groupId, running);
+      void running.finally(() => { if (messages.get(groupId) === running) messages.delete(groupId); }).catch(() => {});
+    }
+    if (replayKey) {
+      handledMessages.set(replayKey, { job: running, at: now().valueOf() });
+      for (const [key, row] of handledMessages) {
+        if (now().valueOf() - row.at > 86400000 || handledMessages.size > 5000) handledMessages.delete(key);
+        else break;
+      }
+    }
     return running;
   }
 
