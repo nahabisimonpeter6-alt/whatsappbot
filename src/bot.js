@@ -7,13 +7,25 @@ const { createMessageArchive } = require("./message-archive");
 const { recoverMissedAuthSync } = require("./whatsapp-compat");
 const { downloadAvailableMedia } = require("./media");
 
-function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
+function createRuntime({ client, port = 8080, prefix = ".", logger = console, onExit = code => process.exit(code), shutdownTimeoutMs = 5000, startupTimeoutMs = 300000, automationStore = createAutomationStore(), now = () => new Date(), ownerNumbers, revoke, archive, makeMedia }) {
   const app = express();
   const controller = createController({ client, storage: automationStore, prefix, logger, now, ownerNumbers, revoke, archive, makeMedia });
   let ready = false;
   let authenticated = false;
   let stopping = false;
   let stopPromise;
+  let startupTimer;
+
+  function armStartupWatchdog() {
+    if (startupTimer || ready || stopping) return;
+    startupTimer = setTimeout(() => {
+      startupTimer = undefined;
+      if (!ready && !stopping) fail("[WHATSAPP] startup timed out:", new Error(`WhatsApp did not become ready within ${startupTimeoutMs} ms. Restarting is required.`));
+    }, startupTimeoutMs);
+    startupTimer.unref();
+  }
+
+  function clearStartupWatchdog() { clearTimeout(startupTimer); startupTimer = undefined; }
 
   app.get("/", (_req, res) => res.status(200).send("WhatsApp bot service"));
   app.get("/live", (_req, res) => res.status(stopping ? 503 : 200).json({ ok: !stopping }));
@@ -28,6 +40,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
     if (stopPromise) return stopPromise;
     stopping = true;
     ready = false;
+    clearStartupWatchdog();
     controller.stop();
     stopPromise = (async () => {
       const watchdog = setTimeout(() => onExit(code), shutdownTimeoutMs);
@@ -46,6 +59,7 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   }
 
   function fail(label, error) {
+    if (stopping) return;
     logger.error(label, error);
     void stop(1);
   }
@@ -53,13 +67,21 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
   server.on("error", error => fail("[HTTP] failed:", error));
   client.on("qr", qr => {
     if (stopping) return;
+    // Initial pairing needs a human to scan the QR; allow them time to do so.
+    clearStartupWatchdog();
     logger.log("[WHATSAPP] Scan this QR from WhatsApp > Linked devices.");
     qrcode.generate(qr, { small: true });
   });
-  client.on("authenticated", () => { authenticated = true; logger.log("[WHATSAPP] authenticated"); });
+  client.on("authenticated", () => {
+    if (stopping) return;
+    authenticated = true;
+    armStartupWatchdog();
+    logger.log("[WHATSAPP] authenticated");
+  });
   client.on("ready", () => {
     if (stopping) return;
     ready = true;
+    clearStartupWatchdog();
     controller.start();
     logger.log("[WHATSAPP] Bot is ready and connected.");
   });
@@ -91,6 +113,8 @@ function createRuntime({ client, port = 8080, prefix = ".", logger = console, on
 
   // Defer startup so synchronous initialization errors also reach fail().
   const initialization = Promise.resolve().then(async () => {
+    if (stopping) return;
+    armStartupWatchdog();
     await client.initialize();
     if (!stopping && !ready) await recoverMissedAuthSync(client, () => authenticated);
   }).catch(error => {
@@ -106,6 +130,8 @@ function startBot() {
   const { Client, LocalAuth } = require("whatsapp-web.js");
   const port = Number(process.env.PORT || 8080);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be between 1 and 65535.");
+  const startupTimeoutMs = Number(process.env.WHATSAPP_STARTUP_TIMEOUT_MS || 300000);
+  if (!Number.isInteger(startupTimeoutMs) || startupTimeoutMs < 1000 || startupTimeoutMs > 3600000) throw new Error("WHATSAPP_STARTUP_TIMEOUT_MS must be between 1000 and 3600000.");
   const sessionPath = process.env.SESSION_PATH || path.join(__dirname, "..", "data", "session");
   const automationStore = createAutomationStore(process.env.AUTOMATION_STATE_PATH || path.join(sessionPath, "automations.json"));
   const client = new Client({
@@ -121,7 +147,7 @@ function startBot() {
   const archive = createMessageArchive(process.env.MESSAGE_ARCHIVE_PATH || path.join(sessionPath, "message-archive.json"), {
     downloadMedia: (message, limit) => downloadAvailableMedia(client, message, limit)
   });
-  const runtime = createRuntime({ client, port, prefix: process.env.PREFIX || ".", automationStore, archive });
+  const runtime = createRuntime({ client, port, prefix: process.env.PREFIX || ".", startupTimeoutMs, automationStore, archive });
   process.once("SIGTERM", () => void runtime.stop(0));
   process.once("SIGINT", () => void runtime.stop(0));
   return runtime;

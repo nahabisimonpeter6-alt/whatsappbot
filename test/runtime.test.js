@@ -48,6 +48,36 @@ test("synchronous initialization errors are also fatal", async () => {
   assert.equal(f.runtime.server.listening, false);
 });
 
+test("a stalled browser startup exits so the hosting platform can restart the bot", async t => {
+  const f = fixture(() => new Promise(() => {}), { startupTimeoutMs: 20 });
+  t.after(() => f.runtime.stop()); await listen(f);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  await f.runtime.stop();
+  assert.deepEqual(f.exits, [1]);
+  assert.equal(f.destroyed(), 1);
+});
+
+test("QR pairing waits for the user, but stalled startup after authentication times out", async t => {
+  t.mock.method(require("qrcode-terminal"), "generate", () => {});
+  const f = fixture(undefined, { startupTimeoutMs: 20 });
+  t.after(() => f.runtime.stop()); await listen(f); await f.runtime.initialization;
+  f.client.emit("qr", "pairing-needed");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.exits, []);
+  f.client.emit("authenticated");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  await f.runtime.stop();
+  assert.deepEqual(f.exits, [1]);
+});
+
+test("successful readiness cancels the startup watchdog", async t => {
+  const f = fixture(undefined, { startupTimeoutMs: 20 });
+  t.after(() => f.runtime.stop()); await listen(f); await f.runtime.initialization;
+  f.client.emit("authenticated"); f.client.emit("ready");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(f.exits, []);
+});
+
 test("runtime recovers readiness when a paired session was synced before listener registration", async t => {
   let release;
   const f = fixture(() => new Promise(resolve => { release = resolve; })); t.after(() => f.runtime.stop()); await listen(f);

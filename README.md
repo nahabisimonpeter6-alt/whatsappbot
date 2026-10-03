@@ -22,6 +22,7 @@ Scan the terminal QR code using WhatsApp **Linked devices**. Add the bot to your
 | `AUTOMATION_STATE_PATH` | `automations.json` inside `SESSION_PATH` | Saved settings, schedules, warnings, rules, approvals, and audit records |
 | `MESSAGE_ARCHIVE_PATH` | `message-archive.json` inside `SESSION_PATH` | Local 24-hour archive for admin message/media recovery |
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Installed browser executable |
+| `WHATSAPP_STARTUP_TIMEOUT_MS` | `300000` (5 minutes) | Exit a stalled WhatsApp startup so the server can restart it; suspended while waiting for QR pairing |
 | `OWNER_NUMBERS` | Empty | Comma-separated international owner phone numbers, e.g. `256700123456,256700654321` |
 
 For example, use `PREFIX='!' npm start` to change commands to `!d`, `!r`, and `!ping`.
@@ -287,9 +288,13 @@ Removing all activities for a day stops that day's announcement. An admin can ch
 
 ## Railway deployment
 
+To keep the bot running when your PC is shut down or asleep, deploy it to an always-on server. Closing the local terminal, losing internet or powering off the PC stops a locally hosted bot. A process manager on that PC still requires the PC to stay powered on.
+
+Follow the [24/7 hosting guide](docs/24-7-hosting.md) to deploy this GitHub repository to Railway, attach persistent storage, pair WhatsApp and move your activity settings. Cloud deployment requires your own Railway account and a phone for the initial QR scan; committing these files does not deploy or pair a cloud bot.
+
 Deploy using the included Dockerfile. It installs Chromium and uses `npm ci` with the checked-in lockfile. Mount a persistent Railway volume at `/app/data/session`; the Docker image sets `SESSION_PATH` to this location. Use a single running instance for each paired WhatsApp account.
 
-The included `railway.json` configures Docker deployment, `/live` as the deployment healthcheck, and up to 10 automatic restarts after process failures. See [Railway's configuration reference](https://docs.railway.com/config-as-code/reference).
+The included `railway.json` configures Docker deployment, one replica, Serverless sleeping disabled, `/live` as the deployment healthcheck and the `ALWAYS` restart policy. **This configuration requires a paid Railway plan** because Free/Trial plans do not support `ALWAYS`. Railway Hobby currently starts at $5/month including $5 of resource usage; usage above that adds to the bill. See Railway's [restart policy](https://docs.railway.com/deployments/restart-policy), [pricing](https://docs.railway.com/pricing/plans) and [configuration reference](https://docs.railway.com/config-as-code/reference).
 
 | Endpoint | Meaning |
 | --- | --- |
@@ -297,7 +302,7 @@ The included `railway.json` configures Docker deployment, `/live` as the deploym
 | `/health` | HTTP 200 with `ok: true, ready: true` only when WhatsApp is connected; otherwise HTTP 503 |
 | `/` | Basic service response; does not indicate WhatsApp readiness |
 
-Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. Startup also checks whether a restored session finished syncing before the library registered its listener and recovers the missing readiness callback. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
+Initialization failures, authentication failures, and disconnects exit with status 1 so Railway can restart the process. A startup watchdog also exits if WhatsApp has not become ready within five minutes. It pauses while a QR needs scanning and resumes after authentication; readiness cancels it. Set `WHATSAPP_STARTUP_TIMEOUT_MS` to an integer between 1000 and 3600000 to change the wait. Startup also checks whether a restored session finished syncing before the library registered its listener and recovers the missing readiness callback. SIGINT/SIGTERM close the browser and HTTP server. Cleanup is limited to five seconds before exit. Running `npm start` locally does not automatically restart the process; start it again after an error, or use a process supervisor.
 
 ## Verification
 
