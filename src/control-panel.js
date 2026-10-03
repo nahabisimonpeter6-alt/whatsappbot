@@ -24,7 +24,7 @@ function splitCommands(text) {
   return result;
 }
 
-const SETTINGS_KEYS = ["timezone", "announceAt", "activities", "autopilot", "dryRun", "approval", "proposalExpiryMs", "destructiveCap", "commandRate", "moderators", "whitelist", "permissions", "disabledCommands", "aliases", "macros", "customCommands", "rules", "raidThreshold", "raidWindowMs", "repostDeleted", "repostViewOnce"];
+const SETTINGS_KEYS = ["timezone", "announceAt", "activities", "autopilot", "dryRun", "approval", "proposalExpiryMs", "destructiveCap", "commandRate", "moderators", "whitelist", "permissions", "disabledCommands", "aliases", "macros", "customCommands", "rules", "raidThreshold", "raidWindowMs", "repostDeleted", "repostViewOnce", "contentModeration"];
 function validName(name) { return /^[a-z][a-z0-9_-]{0,31}$/.test(name) && !["constructor", "prototype"].includes(name); }
 
 function installControlPanel(engine, { client, storage, prefix = ".", now = () => new Date() }) {
@@ -56,6 +56,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Members: ${prefix}ping, ${prefix}activities, ${prefix}cmds`,
       `Moderation: ${prefix}warn USER reason, ${prefix}unwarn USER, ${prefix}d (reply to a message), ${prefix}mute USER MINUTES, ${prefix}unmute USER`,
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
+      `Content moderation: ${prefix}filter on|off|status; ${prefix}filter test MESSAGE returns FLAG or OK without deleting anything. Configure OPENAI_API_KEY first. Judges English, Luganda, Swahili and Sheng using the group policy; uncertain checks keep the message.`,
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
       `Admin link recovery: ${prefix}restorelink list shows links deleted by the bot; ${prefix}restorelink ID restores one to the group chat; ${prefix}restorelink restores the latest. Also sends to the selected group when used in private control.`,
       `Admin view-once recovery: reply to the media with ${prefix}v; ${prefix}v retrieves the latest saved view-once file; ${prefix}v list shows saved IDs; ${prefix}v ID retrieves one. ${prefix}viewonce is also supported. Available photos and videos are reposted as normal media that can be opened repeatedly. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
@@ -170,7 +171,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       const errors = group.audit.filter(row => row.result === "failed").slice(-3).map(row => `${row.command}: ${row.error}`).join("\n") || "none";
       const pending = group.proposals.filter(proposal => proposal.status === "pending").map(proposal => `${proposal.id}: ${proposal.command}`).join(", ") || "none";
       const linkRule = group.rules.find(rule => rule.id === "builtin-links");
-      await ctx.reply(`Autopilot: ${group.autopilot ? "on" : "off"}\nPaused: ${group.paused || engine.auditPaused.has(ctx.groupId)}\nDry run: ${group.dryRun}\nApproval: ${group.approval}\nLink moderation: ${linkRule?.enabled ? "on" : "off"} (${prefix}antilink status for details)\nPending proposals: ${pending}\nBot admin: ${botAdmin}\nActive timers: ${group.activities.length ? 1 : 0} agenda, ${group.rules.filter(rule => rule.enabled && rule.trigger === "schedule").length} scheduled rules\nWarnings: ${JSON.stringify(group.warnings)}\nLink offences: ${JSON.stringify(group.linkWarnings)}\nRemovals this hour: ${removals}\nRecent errors:\n${errors}`);
+      await ctx.reply(`Autopilot: ${group.autopilot ? "on" : "off"}\nPaused: ${group.paused || engine.auditPaused.has(ctx.groupId)}\nDry run: ${group.dryRun}\nApproval: ${group.approval}\nLink moderation: ${linkRule?.enabled ? "on" : "off"} (${prefix}antilink status for details)\nContent filter: ${group.contentModeration ? "on" : "off"} (${prefix}filter status for details)\nPending proposals: ${pending}\nBot admin: ${botAdmin}\nActive timers: ${group.activities.length ? 1 : 0} agenda, ${group.rules.filter(rule => rule.enabled && rule.trigger === "schedule").length} scheduled rules\nWarnings: ${JSON.stringify(group.warnings)}\nLink offences: ${JSON.stringify(group.linkWarnings)}\nRemovals this hour: ${removals}\nRecent errors:\n${errors}`);
     }
   });
   register({ name: "set", description: "Change an automation setting",

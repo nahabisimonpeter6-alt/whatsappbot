@@ -2,6 +2,7 @@ const { revokeForEveryone } = require("./revoke");
 const { publicError, validUser } = require("./permissions");
 const { containsLink } = require("./links");
 const { resetLinkCycle, checkLinkCycle } = require("./warning-cycle");
+const { createHash } = require("node:crypto");
 const raw = args => typeof args === "string" ? { raw: args } : args || {};
 const senderId = message => message?.author || message?.from;
 
@@ -28,6 +29,14 @@ function installCoreCommands(engine, { client, storage, prefix = ".", revoke = r
       else if (ctx.message?.hasQuotedMsg) ctx.targetMessage = await ctx.message.getQuotedMessage();
       else if (ctx.args.raw?.trim()) ctx.targetMessage = await client.getMessageById(ctx.args.raw.trim());
       else throw publicError(`Reply to a message with ${prefix}d.`);
+    }
+    if (ctx.args.contentFilter) {
+      if (!storage.get(ctx.groupId).contentModeration) throw publicError("The content filter has been turned off; deletion was skipped.");
+      const current = await client.getMessageById(ctx.targetMessage?.id?._serialized || ctx.targetMessage?.id?.$1);
+      if (!current || current.type === "revoked" || createHash("sha256").update(String(current.body || "")).digest("hex") !== ctx.args.expectedBodyHash) {
+        throw publicError("The message changed or is no longer available; content-filter deletion was skipped.");
+      }
+      ctx.targetMessage = current;
     }
     const remote = ctx.targetMessage?.id?.remote?._serialized || ctx.targetMessage?.id?.remote ||
       (ctx.targetMessage?.fromMe ? ctx.targetMessage?.to : ctx.targetMessage?.from);

@@ -9,6 +9,7 @@ const DEFAULT_GROUP = {
   lastAnnouncementDate: null,
   autopilot: true, paused: false, dryRun: false, approval: "off", proposalExpiryMs: 600000,
   repostDeleted: true, repostViewOnce: true,
+  contentModeration: false,
   destructiveCap: 20, commandRate: 30,
   moderators: [], whitelist: [], permissions: {}, disabledCommands: [],
   aliases: {}, macros: {}, customCommands: {}, rules: [
@@ -72,7 +73,7 @@ function validWhen(value) {
 
 function validateGroup(group) {
   if (!group || typeof group !== "object" || Array.isArray(group)) throw new Error("Invalid saved group settings.");
-  for (const key of ["autopilot", "paused", "dryRun", "repostDeleted", "repostViewOnce"]) if (typeof group[key] !== "boolean") throw new Error("Invalid automation switch.");
+  for (const key of ["autopilot", "paused", "dryRun", "repostDeleted", "repostViewOnce", "contentModeration"]) if (typeof group[key] !== "boolean") throw new Error("Invalid automation switch.");
   if (!["off", "destructive", "all"].includes(group.approval)) throw new Error("Invalid approval setting.");
   for (const [key, minimum, maximum] of [["proposalExpiryMs", 1000, 86400000], ["destructiveCap", 1, 1000], ["commandRate", 1, 1000], ["raidThreshold", 1, 1000], ["raidWindowMs", 1000, 1000000]]) {
     if (!Number.isInteger(group[key]) || group[key] < minimum || group[key] > maximum) throw new Error("Invalid automation limit.");

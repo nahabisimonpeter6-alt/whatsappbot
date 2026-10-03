@@ -11,9 +11,11 @@ const { installRecoveryCommands } = require("./recovery-commands");
 const { revokeForEveryone } = require("./revoke");
 const { installAutoRecovery } = require("./auto-recovery");
 const { resetLinkCycle } = require("./warning-cycle");
+const { createContentClassifier } = require("./content-classifier");
+const { installContentFilter } = require("./content-filter");
 
 function createController({ client, storage, prefix = ".", logger = console, now = () => new Date(), ownerNumbers, revoke,
-  archive = createMessageArchive(undefined, { now, logger }), makeMedia }) {
+  archive = createMessageArchive(undefined, { now, logger }), makeMedia, contentClassifier = createContentClassifier({ logger }) }) {
   function capture(message) {
     try { return archive.observe(message, { retryMedia: true }); } catch (error) { logger.error("[ARCHIVE] capture failed:", error); }
   }
@@ -84,10 +86,11 @@ function createController({ client, storage, prefix = ".", logger = console, now
     }
   });
   const core = installCoreCommands(engine, options);
+  const contentFilter = installContentFilter(engine, { ...options, classifier: contentClassifier, isActive: () => active });
   panel = installControlPanel(engine, options);
   installAuditCommands(engine, options, core);
   installRecoveryCommands(engine, options);
-  const recovery = installAutoRecovery(engine, { ...options, isActive: () => active });
+  const recovery = installAutoRecovery(engine, { ...options, isActive: () => active, allowsContentRepost: contentFilter.allowsRepost });
   rules = createRulesEngine(engine, options);
   for (const [, group] of storage.entries()) rules.validateRules(group.rules);
   engine.afterRun = async (_entry, ctx, outcome) => {
@@ -113,7 +116,11 @@ function createController({ client, storage, prefix = ".", logger = console, now
     // message's membership, while panic/resume can still interrupt the queue.
     const previous = messages.get(groupId) || Promise.resolve();
     const running = previous.catch(() => {}).then(() => processMessage(message)).then(() => {
-      recovery.schedule(groupId, archivedId, "viewonce");
+      // Classify in the background so a slow provider cannot block link
+      // moderation or commands. Avoid redisplaying captions that were flagged.
+      void contentFilter.schedule(message).then(verdict => {
+        if (active && verdict !== "FLAG") recovery.schedule(groupId, archivedId, "viewonce");
+      });
     });
     messages.set(groupId, running);
     void running.finally(() => { if (messages.get(groupId) === running) messages.delete(groupId); }).catch(() => {});
@@ -184,7 +191,7 @@ function createController({ client, storage, prefix = ".", logger = console, now
   }
   function stop() { active = false; automations.stop(); clearInterval(timer); }
   async function tick() { if (!active) return; await automations.tick(); await ruleTick(); }
-  return { engine, panel, rules, archive, recovery, handleMessage, handleUnavailableViewOnce, handleRevocation, notification, start, stop, tick };
+  return { engine, panel, rules, archive, recovery, contentFilter, handleMessage, handleUnavailableViewOnce, handleRevocation, notification, start, stop, tick };
 }
 
 module.exports = { createController };

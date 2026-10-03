@@ -21,7 +21,7 @@ try {
   if (manager.error || manager.status !== 0) throw new Error("No systemd user manager is available. Run this from your Linux desktop login.");
   const root = path.resolve(__dirname, "..");
   const directory = path.join(os.homedir(), ".config", "systemd", "user");
-  const settings = ["PORT", "PREFIX", "SESSION_PATH", "AUTOMATION_STATE_PATH", "MESSAGE_ARCHIVE_PATH", "PUPPETEER_EXECUTABLE_PATH", "WHATSAPP_STARTUP_TIMEOUT_MS", "OWNER_NUMBERS"]
+  const settings = ["PORT", "PREFIX", "SESSION_PATH", "AUTOMATION_STATE_PATH", "MESSAGE_ARCHIVE_PATH", "PUPPETEER_EXECUTABLE_PATH", "WHATSAPP_STARTUP_TIMEOUT_MS", "OWNER_NUMBERS", "OPENAI_API_KEY", "CONTENT_MODERATION_MODEL", "CONTENT_MODERATION_TIMEOUT_MS"]
     .filter(name => process.env[name] !== undefined)
     .map(name => `Environment=${quote(`${name}=${process.env[name]}`)}`);
   const unit = ["[Unit]", "Description=WhatsApp moderation bot", "StartLimitIntervalSec=0", "", "[Service]", "Type=simple",

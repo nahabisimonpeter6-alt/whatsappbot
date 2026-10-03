@@ -3,7 +3,7 @@ const { containsLink } = require("./links");
 const { messageId } = require("./message-archive");
 const { recoveryAttribution } = require("./recovery-attribution");
 
-function installAutoRecovery(engine, { client, storage, archive, logger = console, isActive, makeMedia = makeMessageMedia }) {
+function installAutoRecovery(engine, { client, storage, archive, logger = console, isActive, makeMedia = makeMessageMedia, allowsContentRepost = async () => true }) {
   const jobs = new Set();
   const pending = new Set();
   const reschedule = new Set();
@@ -20,6 +20,7 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
       if (kind === "deleted" && !row.deleted || kind === "viewonce" && !row.viewOnce) return { skipped: true };
       if (complete(row, kind) || row.reposts?.[kind]?.status === "sending") return { alreadySent: true };
       if (row.reposts?.[kind]?.status === "unavailable" && !row.media) return { alreadyReported: true };
+      if (!(await allowsContentRepost(row, ctx.chat))) return { skipped: true };
       if (containsLink(row.body) && group.rules.some(rule => rule.id === "builtin-links" && rule.enabled) &&
         !(await engine.permissions.protectedTarget(ctx.chat, ctx.groupId, row.sender))) return { skipped: true };
       const previous = row.reposts?.[kind] || {};
@@ -64,6 +65,7 @@ function installAutoRecovery(engine, { client, storage, archive, logger = consol
       if (!row || suppressed(row) || kind === "viewonce" && !row.viewOnce || !group.autopilot || group.paused ||
         !group[kind === "deleted" ? "repostDeleted" : "repostViewOnce"] || complete(row, kind)) return;
       if (row.reposts?.[kind]?.status === "unavailable" && !row.media) return;
+      if (!(await allowsContentRepost(row))) return;
       await engine.executeCommand("repost", { groupId, actor: { type: "system", id: "automatic-recovery" },
         args: { archiveId: id, kind }, reply: text => client.sendMessage(groupId, text) });
     })().catch(error => logger.error("[RECOVERY] automatic repost failed:", error));

@@ -26,6 +26,9 @@ On a Linux desktop with systemd, stop any foreground bot first and run `npm run 
 | `PUPPETEER_EXECUTABLE_PATH` | `/usr/bin/chromium` | Installed browser executable |
 | `WHATSAPP_STARTUP_TIMEOUT_MS` | `300000` (5 minutes) | Exit a stalled WhatsApp startup so the server can restart it; suspended while waiting for QR pairing |
 | `OWNER_NUMBERS` | Empty | Comma-separated international owner phone numbers, e.g. `256700123456,256700654321` |
+| `OPENAI_API_KEY` | Empty | API key for optional language-aware content filtering; configure privately in Railway Variables or the local process environment |
+| `CONTENT_MODERATION_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model used by the content classifier |
+| `CONTENT_MODERATION_TIMEOUT_MS` | `4000` | Classifier timeout in milliseconds, integer 10–30000; timed-out messages are kept |
 
 For example, use `PREFIX='!' npm start` to change commands to `!d`, `!r`, and `!ping`.
 
@@ -60,6 +63,8 @@ Use a full international phone number, `NUMBER@c.us`, or `NUMBER@lid` as a targe
 | --- | --- |
 | `.help` | List member, moderation, activity, and admin commands |
 | `.antilink on`, `.antilink off`, `.antilink status` | Restore/enable default link deletion, warnings and fourth-offence removal, disable these rules, or show moderation blockers |
+| `.filter on`, `.filter off`, `.filter status` | Admins enable, disable or inspect language-aware content filtering in their group |
+| `.filter test MESSAGE` | Admins test text and receive exactly `FLAG` or `OK`; does not delete anything or enable filtering |
 | `.warn USER [reason]` / `.unwarn USER` | Add/remove a warning |
 | `.deleted` / `.retrieve [ID]` | Admins list saved deletions or repost a saved copy; omitting ID retrieves the latest deletion |
 | `.v list` / `.v [ID]` (also `.viewonce`) | Admins list or retrieve available saved view-once media as normal media; reply with `.v` or use `.v` alone for the latest file |
@@ -81,6 +86,28 @@ Use a full international phone number, `NUMBER@c.us`, or `NUMBER@lid` as a targe
 | `.say MESSAGE` | Send a group message |
 
 Admin controls have an admin role floor and cannot be disabled, so a permission change cannot hand configuration control to members or disable recovery. Operational commands can have their minimum roles changed. The bot still needs the relevant WhatsApp permissions for deletions, removals, and group locking.
+
+### Language-aware content filtering
+
+The classifier uses the policy in [src/content-policy.txt](src/content-policy.txt). It flags profanity and disguised vulgar insults, targeted hate speech, harassment or personal threats, sexually explicit content, and incitement to violence. It permits normal conversation and friendly banter, mild expressions such as "damn" and "crap", discussion or news reporting about offensive topics, and questions or quotes about words. It judges English, Luganda, Swahili, Sheng and mixed-language messages in their original language, treats instructions inside messages as content, and chooses `OK` when unsure.
+
+Set `OPENAI_API_KEY` privately in Railway Variables and redeploy. For a local foreground process, export the key in its environment before `npm start`. For the background Linux service, export it before rerunning `npm run start:local`; restarting an existing service alone does not copy new shell variables. Keep keys out of messages, Git and screenshots. Use an OpenAI API account with available billing or credit; API calls incur usage charges.
+
+Filtering starts **off in every group**, including groups saved before this feature. From another current admin account, send:
+
+```text
+.filter test damn, that was close
+.filter test what does this word mean?
+.filter on
+.filter status
+.filter off
+```
+
+After `.filter on`, the bot sends incoming member message text and media captions to the [OpenAI Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses), using the policy as separate instructions and `store: false`. Files, phone numbers, group identifiers and chat history are not supplied as metadata; any such information written into the message text is part of the input. Only a completed response containing `FLAG` requests deletion; `OK`, missing credentials, timeouts, invalid replies and provider failures keep the message. Model decisions can still be wrong, especially for local slang; test representative messages before enabling it in a group.
+
+Admins, owners, delegated moderators, whitelisted members, bot messages and direct chats are exempt. The bot must be a group admin, and autopilot, panic, approval, dry-run, disabled deletion commands and the shared hourly destructive cap still apply. Content filtering does not add link warnings or remove members. Before deletion, the bot fetches the current message and checks that its text has not changed. Flagged messages and captions are excluded from automatic recovery; deliberate admin recovery commands remain available.
+
+Checks run in the background so API delays do not block link moderation. The classifier allows up to four concurrent requests and 60 requests per minute, caches valid decisions for two minutes, and keeps messages longer than 20,000 characters or beyond those request limits. `.filter status` shows configuration and recent classifier errors. `.status` shows the group's filter setting. Settings persist across restarts and are included in configuration exports. Automated tests use mocked responses; they do not establish live multilingual accuracy.
 
 ### If links are not being removed
 
@@ -317,7 +344,7 @@ Initialization failures, authentication failures, WhatsApp disconnects, Chromium
 
 ## Verification
 
-`npm test` uses fake clients to exercise the shared command pipeline from chat, DM, schedule and rule; roles and phone/LID identities; moderation; welcomes; activities; approvals and restart recovery; conditions and rule chains; panic; dry-run; caps; macros; FAQ; reversible actions; browser revocation; HTTP readiness; and failure shutdown without contacting WhatsApp.
+`npm test` uses fake clients to exercise the shared command pipeline from chat, DM, schedule and rule; roles and phone/LID identities; moderation; welcomes; activities; approvals and restart recovery; conditions and rule chains; panic; dry-run; caps; macros; FAQ; reversible actions; browser revocation; HTTP readiness; and failure shutdown without contacting WhatsApp. Content-filter tests cover instruction/input separation, strict FLAG/OK parsing, timeouts, provider failures, request limits, caching, admin controls, persistence, protected members, approvals, changed-message checks and automatic recovery suppression without contacting OpenAI.
 
 For a live test after pairing, use another account:
 

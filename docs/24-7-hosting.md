@@ -22,6 +22,8 @@ After the cloud bot connects, use `.config import JSON` in the same group, repla
 6. Restore your exported group settings if needed. From another account, send `.ping` and check for `pong`. Confirm welcomes, link moderation and the activity schedule in the group. The linked bot account must still be an admin to delete links and remove members.
 7. Switch off your PC and send `.ping` again from your phone or another account. A reply verifies that the cloud instance is handling messages independently of your PC.
 
+For language-aware content moderation, set `OPENAI_API_KEY` privately in the service's Railway Variables and redeploy. The default model is `gpt-4.1-mini`; `CONTENT_MODERATION_MODEL` can change it. Filtering is off until another group admin sends `.filter on`. Use `.filter test MESSAGE` for a FLAG/OK decision without deletion and `.filter status` to diagnose configuration errors. The API account needs available credit or billing. Keep API keys out of GitHub and WhatsApp messages. See the [filter policy, controls and limits](../README.md#language-aware-content-filtering).
+
 | Setting | Value |
 | --- | --- |
 | Source | This GitHub repository, branch `main` |
