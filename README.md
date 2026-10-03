@@ -220,6 +220,8 @@ All entry points call `engine.executeCommand(name, ctx)`. Nested commands call `
 
 ## Retrieving deleted messages and view-once media
 
+Reply to recoverable view-once media with `.v` to repost a new ordinary attachment. Manual recovery and automatic reposting explicitly send photos and videos with `isViewOnce: false`; the new copy can be opened repeatedly. The original message remains view-once, and reposting requires the bot to have received the file.
+
 Recovered deletions show `From: NAME` for the person who deleted the message, using WhatsApp's native `revokeSender` identity and their saved contact name or public profile name. `Original sender: NAME` identifies the author separately, including when an admin deletes another member's message. If WhatsApp omits the deletion identity, `From:` explicitly says it is unknown. Saved names and user mentions provide fallbacks when contact lookup fails; the bot never assumes the original sender performed the deletion. View-once copies show their sender's display name in `From:`.
 
 WhatsApp currently delivers some incoming view-once images as `ciphertext` placeholders with subtype `view_once_unavailable_fanout`. These contain no file, media key, or download path and do not trigger the library's ordinary `message` event. The bot listens to `message_ciphertext` as well, records these as unavailable view-once messages, and explains the missing file once. `.viewonce list` shows their records. Changing outgoing media options cannot retrieve an image that the linked device never received. If downloadable media later arrives for the same message, the bot can save and repost it without repeating the earlier notice; older saved unavailable notices also permit this retry. Personal chats remain excluded.

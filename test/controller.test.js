@@ -15,7 +15,7 @@ function setup(t, storage) {
   f.message = (body, actor = "200@c.us", dm = false) => ({
     body, author: dm ? undefined : actor, from: dm ? actor : "1000@g.us", type: "chat", fromMe: false,
     id: { _serialized: `message-${f.sent.length}`, remote: "1000@g.us" },
-    getChat: async () => f.chat, reply: async text => f.sent.push({ text })
+    getChat: async () => f.chat, reply: async (text, _chatId, options) => f.sent.push(options ? { text, options } : { text })
   });
   f.notification = (recipient, type = "add", id = `join-${recipient}`) => ({
     chatId: "1000@g.us", recipientIds: [recipient], type, id: { _serialized: id }, getChat: async () => f.chat
@@ -360,12 +360,29 @@ test("v lists view-once records and retrieves normal media by latest, ID, or rep
     assert.equal(f.sent.at(-1).text.mimetype, "image/png");
     assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "saved picture");
     assert.equal(f.sent.at(-1).text.isViewOnce, undefined);
+    assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
   }
   const request = f.message(".v");
   request.hasQuotedMsg = true; request.getQuotedMessage = async () => incoming;
   await f.controller.handleMessage(request);
   assert.equal(f.sent.at(-1).text.mimetype, "image/png");
+  assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
   assert.ok(f.storage.get("1000@g.us").audit.filter(row => row.command === "viewonce").every(row => row.result === "success"));
+});
+
+test("v reposts saved view-once video with repeatable viewing in private admin control", async t => {
+  const f = setup(t);
+  const incoming = f.message("", "300@lid");
+  incoming.id._serialized = "viewonce-video";
+  Object.assign(incoming, { type: "video", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "video/mp4", data: Buffer.from("saved video").toString("base64"), filename: "clip.mp4" }) });
+  await f.controller.handleMessage(incoming);
+  const saved = f.controller.archive.get("1000@g.us", incoming.id._serialized);
+  await command(f, ".use 1000@g.us", "200@c.us", true);
+  await command(f, `.v ${saved.id}`, "200@c.us", true);
+  assert.equal(f.sent.at(-1).text.mimetype, "video/mp4");
+  assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "saved video");
+  assert.deepEqual(f.sent.at(-1).options, { isViewOnce: false });
 });
 
 test("v retains admin permissions and explains when WhatsApp did not supply a file", async t => {

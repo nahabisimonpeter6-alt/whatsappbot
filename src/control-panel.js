@@ -58,7 +58,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
       `Admins: ${prefix}antilink on|off|status, ${prefix}status, ${prefix}r (reply to a member), ${prefix}ban USER, ${prefix}unban USER, ${prefix}lock, ${prefix}unlock`,
       `Admin recovery: ${prefix}deleted lists saved deleted messages; ${prefix}retrieve ID reposts one; ${prefix}retrieve gets the latest deletion.`,
       `Admin link recovery: ${prefix}restorelink list shows links deleted by the bot; ${prefix}restorelink ID restores one to the group chat; ${prefix}restorelink restores the latest. Also sends to the selected group when used in private control.`,
-      `Admin view-once recovery: reply to the media with ${prefix}v; ${prefix}v retrieves the latest saved view-once file; ${prefix}v list shows saved IDs; ${prefix}v ID retrieves one. ${prefix}viewonce is also supported. Available copies are reposted as normal media. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
+      `Admin view-once recovery: reply to the media with ${prefix}v; ${prefix}v retrieves the latest saved view-once file; ${prefix}v list shows saved IDs; ${prefix}v ID retrieves one. ${prefix}viewonce is also supported. Available photos and videos are reposted as normal media that can be opened repeatedly. WhatsApp sometimes delivers only a placeholder with no file; those cannot be recovered. Archive: 24 hours.`,
       `Automatic recovery: on by default. Admins: ${prefix}set repostdeleted on|off, ${prefix}set repostviewonce on|off. Rejoined members start link warnings from zero.`,
       `Activities: ${prefix}activities week. Any group admin can add games or events: ${prefix}activity add friday 20:00 | Truth or Dare. More: ${prefix}activity help`,
       `Automation: ${prefix}rule list, ${prefix}set approval off|destructive|all, ${prefix}panic, ${prefix}resume, ${prefix}audit`,
@@ -108,7 +108,7 @@ function installControlPanel(engine, { client, storage, prefix = ".", now = () =
     const inGroup = message.from?.endsWith("@g.us");
     return { groupId: inGroup ? message.from : selected.get(await selectionKey(actorId)),
       actor: { type: "user", id: actorId }, isDM: !inGroup, message,
-      reply: text => message.reply(text), client, storage };
+      reply: (text, options) => message.reply(text, undefined, options), client, storage };
   }
 
   async function executeText(text, ctx) {

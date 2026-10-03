@@ -53,9 +53,11 @@ function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = me
       const attribution = await recoveryAttribution(ctx.client, row, name === "viewonce" || !row.deleted ? "viewonce" : "deleted");
       // This explicit admin action always publishes in the selected group,
       // including when the admin invokes it through private group control.
-      const send = name === "restorelink" ? content => ctx.chat.sendMessage(content) : ctx.reply;
+      const send = name === "restorelink" ? (content, options) => ctx.chat.sendMessage(content, options) : ctx.reply;
       await send(`${name === "restorelink" ? "🔗 Link restored to the group by an admin" : "📥 Saved copy"}\n${attribution.text}\n${row.body || `[${row.type}]`}${row.hasMedia && !row.media ? `\nMedia unavailable: ${row.mediaStatus}.` : ""}`);
-      if (row.media) await send(makeMedia(row.media));
+      // A recovered copy is a new ordinary attachment, even when its source
+      // was view-once. Never carry the source's view-once sending flag forward.
+      if (row.media) await send(makeMedia(row.media), { isViewOnce: false });
       if (name === "restorelink" && ctx.isDM) await ctx.reply(`✅ Link ${row.id} restored to ${ctx.chat.name || "the selected group"}.`);
       return { archivedId: row.id, ...(name === "restorelink" ? { destination: ctx.groupId } : {}) };
     }
