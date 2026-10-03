@@ -16,11 +16,11 @@ function installRecoveryCommands(engine, { archive, prefix = ".", makeMedia = me
     await ctx.reply(rows.length ? `${rows.map(describe).join("\n")}\n${command === "restorelink" ? "Restore to group" : "Retrieve"}: ${prefix}${command} ID. Archive expires after 24 hours.` : "No matching messages saved in this group's 24-hour archive.");
   }
   register({ name: "deleted", description: "List recently deleted messages saved for this group", run: ctx => showList(ctx, row => row.deleted) });
-  for (const name of ["retrieve", "viewonce", "restorelink"]) register({ name, aliases: name === "retrieve" ? ["restore"] : [],
+  for (const name of ["retrieve", "viewonce", "restorelink"]) register({ name, aliases: name === "retrieve" ? ["restore"] : name === "viewonce" ? ["v"] : [],
     description: name === "restorelink" ? "Restore a bot-deleted link to the group chat" : name === "retrieve" ? "Repost a saved deleted message" : "Retrieve available saved view-once media", effect: true,
     run: async ctx => {
       const token = ctx.args.raw?.trim();
-      if (name === "viewonce" && token === "list") return showList(ctx, row => row.viewOnce);
+      if (name === "viewonce" && token === "list") return showList(ctx, row => row.viewOnce, "v");
       if (name === "restorelink" && token === "list") return showList(ctx, botDeletedLink, "restorelink");
       let row;
       if (token && token !== "last") row = archive.get(ctx.groupId, token);

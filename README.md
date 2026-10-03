@@ -62,7 +62,7 @@ Use a full international phone number, `NUMBER@c.us`, or `NUMBER@lid` as a targe
 | `.antilink on`, `.antilink off`, `.antilink status` | Restore/enable default link deletion, warnings and fourth-offence removal, disable these rules, or show moderation blockers |
 | `.warn USER [reason]` / `.unwarn USER` | Add/remove a warning |
 | `.deleted` / `.retrieve [ID]` | Admins list saved deletions or repost a saved copy; omitting ID retrieves the latest deletion |
-| `.viewonce list` / `.viewonce [ID]` | Admins list or retrieve available saved view-once media; also accepts a reply to the media |
+| `.v list` / `.v [ID]` (also `.viewonce`) | Admins list or retrieve available saved view-once media as normal media; reply with `.v` or use `.v` alone for the latest file |
 | `.d` / `.delete MESSAGE_ID` | Delete a quoted message or specified message for everyone |
 | `.r` / `.remove USER` | Remove the quoted member or specified member |
 | `.mute USER MINUTES` / `.unmute USER` | Locally delete that member's future messages; duration 1–1440 minutes |
@@ -239,11 +239,14 @@ From another group admin account, send `.help` for the recovery commands:
 .restorelink list
 .restorelink ID
 .restorelink
+.v
+.v list
+.v ID
 .viewonce list
 .viewonce ID
 ```
 
-`.deleted` lists up to ten recently deleted messages, with IDs and original senders. `.retrieve ID` (also `.restore ID`) reposts the bot's saved copy. With no ID, it retrieves the most recent saved deletion. An admin can also reply to a message with `.retrieve` or `.viewonce`. `.viewonce list` lists saved view-once records; `.viewonce` without an ID selects the latest one. For private recovery, DM the bot `.groups`, then `.use GROUP_ID`, then these commands; copies are delivered to that admin's chat. Current admin/owner authorization is checked each time, and moderators and ordinary members cannot retrieve saved content.
+`.deleted` lists up to ten recently deleted messages, with IDs and original senders. `.retrieve ID` (also `.restore ID`) reposts the bot's saved copy. With no ID, it retrieves the most recent saved deletion. An admin can also reply to a message with `.retrieve` or `.v`. `.v list` lists saved view-once records; `.v ID` retrieves one and `.v` without an ID selects the latest one. Available files are reposted as ordinary media. `.viewonce` remains an alias for the same behavior. For private recovery, DM the bot `.groups`, then `.use GROUP_ID`, then these commands; copies are delivered to that admin's chat. Current admin/owner authorization is checked each time, and moderators and ordinary members cannot retrieve saved content.
 
 The bot records incoming group messages while connected and saves available media in the background. It marks deletions from both its own moderation and WhatsApp's `message_revoke_everyone` event. When that event includes the original text, it can save it even if the earlier incoming event was missed. This is a **reposted copy**, not restoration of the original WhatsApp message. Content deleted before it was saved, missing media, and expired archive records cannot be reconstructed. WhatsApp can omit the original deletion snapshot; see the library's [deletion event documentation](https://docs.wwebjs.dev/Client.html#event:message_revoke_everyone).
 

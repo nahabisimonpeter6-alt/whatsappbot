@@ -230,7 +230,10 @@ test("help exposes moderation and automation commands to users", async t => {
   assert.match(f.sent.at(-1).text, /retrieve ID/);
   assert.match(f.sent.at(-1).text, /restorelink list/);
   assert.match(f.sent.at(-1).text, /restorelink ID restores one to the group chat/);
-  assert.match(f.sent.at(-1).text, /viewonce list/);
+  assert.match(f.sent.at(-1).text, /reply to the media with \.v/);
+  assert.match(f.sent.at(-1).text, /\.v list/);
+  assert.match(f.sent.at(-1).text, /\.v ID/);
+  assert.match(f.sent.at(-1).text, /\.viewonce is also supported/);
 });
 
 test("admins recover bot-deleted links; members and moderators cannot read the archive", async t => {
@@ -339,6 +342,46 @@ test("view-once retrieval returns available media and explains unavailable media
   await f.controller.handleMessage(hidden);
   await command(f, ".viewonce");
   assert.match(f.sent.at(-1).text, /cannot be retrieved/);
+});
+
+test("v lists view-once records and retrieves normal media by latest, ID, or reply", async t => {
+  const f = setup(t);
+  const incoming = f.message("", "300@lid");
+  incoming.id._serialized = "short-viewonce";
+  Object.assign(incoming, { type: "image", hasMedia: true, _data: { isViewOnce: true },
+    downloadMedia: async () => ({ mimetype: "image/png", data: Buffer.from("saved picture").toString("base64"), filename: "photo.png" }) });
+  await f.controller.handleMessage(incoming);
+  const saved = f.controller.archive.get("1000@g.us", incoming.id._serialized);
+  await command(f, ".v list");
+  assert.ok(f.sent.at(-1).text.includes(saved.id));
+  assert.match(f.sent.at(-1).text, /Retrieve: \.v ID/);
+  for (const text of [".v", `.v ${saved.id}`]) {
+    await command(f, text);
+    assert.equal(f.sent.at(-1).text.mimetype, "image/png");
+    assert.equal(Buffer.from(f.sent.at(-1).text.data, "base64").toString(), "saved picture");
+    assert.equal(f.sent.at(-1).text.isViewOnce, undefined);
+  }
+  const request = f.message(".v");
+  request.hasQuotedMsg = true; request.getQuotedMessage = async () => incoming;
+  await f.controller.handleMessage(request);
+  assert.equal(f.sent.at(-1).text.mimetype, "image/png");
+  assert.ok(f.storage.get("1000@g.us").audit.filter(row => row.command === "viewonce").every(row => row.result === "success"));
+});
+
+test("v retains admin permissions and explains when WhatsApp did not supply a file", async t => {
+  const f = setup(t);
+  const hidden = f.message("", "300@lid");
+  hidden.id._serialized = "short-hidden-viewonce";
+  Object.assign(hidden, { type: "image", _data: { isViewOnce: true }, downloadMedia: async () => undefined });
+  await f.controller.handleMessage(hidden);
+  await command(f, ".mod add 400@c.us");
+  for (const actor of ["300@lid", "400@c.us"]) {
+    await command(f, ".v", actor);
+    assert.match(f.sent.at(-1).text, /Admins only/);
+  }
+  await command(f, ".v");
+  assert.match(f.sent.at(-1).text, /cannot be retrieved/);
+  assert.match(f.sent.at(-1).text, /resend it as normal media/);
 });
 
 test("recovery cannot use an ID or quote from a different group", async t => {
